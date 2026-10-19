@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ATOM | ユーザー情報</title>
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <a class="brand" href="./"><span class="mark">A</span><span>ATOM</span><span class="header-label">管理画面</span></a>
+    <button id="logout" class="secondary" hidden>ログアウト</button>
+  </header>
+  <main>
+    <div class="page-heading"><h1>ユーザー情報</h1></div>
+    <p id="status" class="status" role="status" aria-live="polite">接続中…</p>
+    <section id="login-panel" class="card login-card">
+      <h2>管理者ログイン</h2>
+      <form id="login-form">
+        <label for="login-id">ログインID またはメールアドレス</label>
+        <input id="login-id" autocomplete="username" required placeholder="admin1">
+        <label for="password">パスワード</label>
+        <input id="password" type="password" autocomplete="current-password" required>
+        <button id="login-button" type="submit">ログイン</button>
+      </form>
+    </section>
+    <section id="viewer" hidden>
+      <div class="card search-card">
+        <form id="search-form" class="search">
+          <label for="target-login-id">ユーザー検索</label>
+          <input id="target-login-id" required maxlength="64" autocomplete="off" spellcheck="false" placeholder="ログインID（例: user1）">
+          <button id="search-button" type="submit">検索</button>
+        </form>
+      </div>
+      <div id="results" hidden>
+        <div class="result-heading">
+          <div class="user-profile">
+            <div id="user-avatar" class="user-avatar" aria-hidden="true"></div>
+            <div class="user-info"><h2 id="target-id"></h2><p id="target-name" class="muted"></p>
+              <details id="user-details"><summary>詳細</summary><p class="muted small">UID: <span id="target-uid"></span></p></details>
+            </div>
+          </div>
+          <div class="update-controls"><span id="fetched-at" class="muted small"></span><button id="refresh" class="secondary">更新</button></div>
+        </div>
+        <div class="daily-summary"><p class="summary-label">今日の会話</p><div id="metrics" class="metrics"></div></div>
+        <div class="tabs" role="tablist" aria-label="表示内容">
+          <button id="state-tab" role="tab" aria-selected="true" aria-controls="state-panel">状態</button>
+          <button id="memory-tab" role="tab" aria-selected="false" aria-controls="memory-panel" tabindex="-1">記憶</button>
+        </div>
+        <section id="state-panel" role="tabpanel" aria-labelledby="state-tab">
+          <div class="state-layout">
+            <div class="card state-card">
+              <div class="conversation-toolbar"><label for="conversation">会話履歴</label><select id="conversation"></select><p id="conversation-note" class="muted small" hidden></p></div>
+              <div id="state-trend"></div>
+            </div>
+            <aside class="card physical-card"><h2>今日の身体データ</h2><div id="physical" class="metrics"></div><p id="physical-note" class="muted small"></p></aside>
+          </div>
+        </section>
+        <section id="memory-panel" role="tabpanel" aria-labelledby="memory-tab" hidden>
+          <div class="memory-layout">
+            <aside class="card interest-card"><h2>興味・関心</h2><div id="keywords" class="chips"></div></aside>
+            <div class="card memories-card"><div class="section-heading"><h2>記憶</h2><span id="memory-count" class="badge"></span></div><div id="memories"></div><p id="memory-note" class="muted small" hidden></p></div>
+          </div>
+        </section>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

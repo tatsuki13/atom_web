@@ -1,109 +1,75 @@
-# Challenge ATOM Conversation AI
+# ATOM 状態・記憶ビューアー
 
-高齢者が毎日気軽に話せる、やさしい会話AIのMVPプロトタイプです。医療機器や診断ツールではなく、孤独感、不安、会話量低下への支援として「話を聞く」「回想を促す」「やさしく質問する」「会話量を記録する」ことを目的にしています。
+管理者がログインID（`user1`など）を指定して、Firestoreの状態・記憶を閲覧するWebページです。
 
-## MVP機能
+## 起動・配置
 
-- 高齢者向けの大きな文字と大きなボタンの日本語チャットUI
-- テキスト会話、ブラウザ対応時の音声入力、読み上げON/OFF
-- CSSだけで描画するAI側の小さな相棒アバター
-- 危険表現の簡易検知と安全優先の返答
-- 感情ラベルの簡易推定
-- OpenAI Responses API接続準備
-- Neon PostgreSQL向けPrisma schema
-- `DATABASE_URL` 未設定時のメモリ保存フォールバック
-- 今日の会話回数、発話数、推定時間、文字数、気分スコア、risk件数のKPI表示
-- 会話本文をブラウザのlocalStorageやキャッシュに保存しない構成
+Node.js 22以上とFirebase CLIが必要です。コマンドはこのリポジトリのルートで実行します。
 
-## セットアップ
-
-```bash
-npm install
-npm run prisma:generate
-npm run dev
+```sh
+npm ci
+npm start
 ```
 
-ローカル起動後、`http://localhost:3000` を開きます。
+[http://localhost:5002](http://localhost:5002)を開きます。ローカル起動でも認証・取得APIは本番Firebase (`challenge-atom-1c763`) に接続します。
 
-## 状態ベクトルの可視化
+Web画面だけを公開する場合:
 
-ログイン後、画面上部の「状態の変化」または `/state-vector` を開くと、保存済みの発話の孤独感・不安・楽しさ・関心を時系列で確認できます。期間や会話の絞り込み、発話の選択、直前の発話との差分、数値一覧に対応しています。「最新の履歴を取得」で会話後のデータを読み直せます。対象は選択した期間の最新500発話です。
-
-会話画面の「状態ベクトルの変化」にも、現在の会話のグラフを表示します。返答後に自動更新し、会話を開き直したときは保存済みの値を読み込みます。1発話では点、2発話以降では線で変化を表示します。
-
-未記録のスコアは0で補わず、グラフを途切れさせます。身体データは会話時点の値が保存されていないため、グラフには含めません。サンプルは `/state-vector?demo=1` でログインせずに試せます。サンプルの発話は保存されません。
-
-感情強度はOpenAI APIで、直近8メッセージを参考に最新発話の4軸を独立した0〜1の値として推定します。確率・正答率ではありません。`OPENAI_EMOTION_MODEL`（任意）を指定すると推定用モデルを分けられ、未指定なら `OPENAI_MODEL` を使用します。Structured Outputs対応モデルが必要です。
-
-軸ごとに、推定済みは丸（値が前回と同じでも丸）、判断材料不足で前回値を維持した場合は三角です。初回で材料がない軸は未推定（null）で点を置きません。維持する値は同じ会話内の文脈推定から引き継ぎ、従来のキーワード値は引き継ぎません。API未設定・失敗時も前回値を維持しますが、判断材料不足とは別の理由を記録・表示します。緊急時は安全応答を優先し、推定APIを呼ばずに前回値を維持します。
-
-既存の `Message.emotionScores` JSONに、各軸の数値と `_analysis`（軸ごとの状態・理由・参照した前回メッセージID、推定元、モデル、方式の版）を保存します。DBスキーマの変更は不要です。従来の記録はキーワード推定として区別して表示します。接し方と話題選択は既存のキーワード方式を維持しています。
-
-スコア検証・維持・差分計算は `npm run test:state-vector` で確認できます。
-
-## 環境変数
-
-`.env.example` を参考に、必要な値をローカル環境やVercel環境変数へ設定してください。実値はGitに入れないでください。
-
-```bash
-OPENAI_API_KEY=
-OPENAI_MODEL=
-DATABASE_URL=
-NEXT_PUBLIC_APP_NAME="Challenge ATOM Conversation AI"
-NEXT_TELEMETRY_DISABLED=1
+```sh
+npm run deploy
 ```
 
-`OPENAI_API_KEY` または `OPENAI_MODEL` が未設定の場合、実APIは呼ばずにモック応答で動きます。`DATABASE_URL` が未設定の場合、会話履歴とKPIはサーバー上のメモリに保存され、再起動で消えます。
+Firebase CLIへのログインと対象プロジェクトへのHosting配置権限が必要です。既存のデフォルトHostingサイトを更新するため、公開先を変更する場合は `firebase.json` の `hosting.site` を設定してください。
 
-## Neon接続
+## リポジトリの役割
 
-NeonのPostgreSQL接続文字列を `DATABASE_URL` に設定した後、以下を実行します。
+このリポジトリは管理用Web画面専用です。実装は `admin-web/`、画面・グラフのテストは `tests/` にあります。以前のNext.jsアプリとそのAPI・Prisma実装は置き換えています。
 
-```bash
-npm run prisma:generate
-npm run prisma:push
+Firebase Authentication、Firestore、取得API `adminConversationViewer` は既存のFirebaseプロジェクトを共用します。Functions、Firestoreルール、管理者アカウントの管理は [challenge_atom](https://github.com/chocolate-kuma/challenge_atom) 側に残します。サーバーの秘密鍵・サービスアカウントはこのWebリポジトリには配置しません。
+
+APIの変更・配置が必要な場合は、`challenge_atom` のルートで実行します:
+
+```sh
+firebase deploy --only functions:conversation:adminConversationViewer --project challenge-atom-1c763
 ```
 
-## 品質確認
+## 使い方
 
-```bash
-npm run prisma:generate
-npm run lint
+1. アプリと同じ管理者ログインID（例: `admin1`）またはメールアドレスでログイン。
+2. 対象のログインID（例: `user1`）を入力して「データを表示」。表示名は登録があれば表示し、UIDは「ユーザー詳細」で確認できます。
+3. 「状態」で推移グラフ・発話ごとの推定値・身体情報、「記憶」で興味関心・保存済みの記憶を確認。
+4. 会話の選択で状態の参照先を変更。「最新の記録を取得」で再取得。
+
+## 権限・データ
+
+管理者APIは認証と`admin: true`のcustom claimを確認した後、`{ログインID}@internal.local`からUIDを特定して読み取ります。検索はログインIDのみです。UIDをキーにした既存の保存先は変更せず、移行も不要です。同じ管理者の認証更新では閲覧状態を維持し、ログアウト・アカウント変更・権限取消時はデータを消去します。記憶の変更・削除機能はありません。Firestoreルールとアプリの表示設定も変更していません。
+
+取得範囲:
+
+- 会話一覧: 最新30件。選択中の会話が一覧から外れた場合は、その会話も追加します。初期表示は終了済みを含む最新の会話。
+- 状態推移: 選択した会話の直近500メッセージに含まれるユーザー発話の`emotionScores`。点の吹き出し用にユーザーの発言本文も取得します。アシスタントの本文は返しません。未推定値では線を途切れさせ、前回値維持は三角で区別します。
+- 記憶: 有効な記憶を最大300件。趣向は確認済み・有効な保存元を最大300件参照。
+- 今日の記録・身体情報: 日本時間の日付で`conversation_daily`と`health_daily`を参照。
+
+グラフの点をクリックすると、軸名・値・日時・発話本文・推定状態をPC向けの吹き出しで表示します。別の点で切り替え、外側のクリック・閉じるボタン・Escで閉じます。キーボードでは点を選択してEnter／Spaceで開けます。前回値を維持した点は現在の発言と元の推定発言を分け、保存された`previousMessageId`を取得済み履歴の範囲でたどります。元の記録が取得範囲外・欠損の場合は確認できない旨を表示します。未保存のAIの判断理由は生成しません。ユーザー・会話・タブの切り替えやログアウト時には吹き出しを閉じます。
+
+本文表示に必要なAPIが未反映の場合は、このリポジトリからHostingを、`challenge_atom`から`adminConversationViewer`をそれぞれ更新してください。Hostingだけ更新した場合も画面は動きますが、本文は取得できない旨の表示になります。
+
+グラフの横軸は発話順の等間隔で、最初は直近30発話を表示します。スライダーは取得済みの全履歴を対象とし、「前へ・次へ」や点のクリックでも発話を選択できます。選択が表示範囲を外れると、最大30発話の範囲が追従します。発話日時と表示中の発話番号も確認できます。
+
+状態グラフは肯定的感情・関心と興味・不安・孤独感・快と不快・活性度・元気さ・行動への意欲の8軸を表示します。縦軸は−1〜＋1、0を中央にした共通スケールで、V2の9段階（0.25刻み）に対応します。各カードに両端の意味を表示し、正負による良し悪しの色分けは行いません。
+
+旧キーワード推定と`context-v1`の4軸、および`context-v2`の各軸は、0〜1から`2 * 値 - 1`で換算し、最も近い0.25刻みに丸めます（`context-v2`の`valence`は元から符号付きのため換算しません）。`context-v3` / `context-v4`は元の符号付き値を表示します。未推定の初期値0は中程度と区別し、値も点も表示しません。旧記録にない追加軸も未推定です。換算は表示時だけで、保存データや推定APIは変更しません。現在の推定APIが4軸を保存している場合、追加4軸はV2形式の記録が保存されるまで未推定になります。
+
+Firebase設定はHostingの`/__/firebase/init.json`から取得します。SDKはFirebase公式CDNの12.0.0です。[Firebase公式の説明](https://firebase.google.com/docs/hosting/reserved-urls)
+
+## 開発・検証
+
+```sh
 npm run build
+npm test
 ```
 
-Next.js 16では `next lint` が削除されているため、lintはESLint CLIで実行します。
+グラフの編集元は `admin-web/src/state-trend.ts` です。生成物 `admin-web/state-trend.js` はGit管理せず、起動・テスト・デプロイ前に自動ビルドします。`challenge_atom/functions/node_modules` への依存はありません。
 
-## キャッシュ削除
-
-```bash
-npm run clean:cache
-```
-
-`clean:all` は `node_modules` や `package-lock.json` を削除せず、不要キャッシュ削除後に `npm cache verify` だけを行います。
-
-## Vercel環境変数
-
-- `OPENAI_API_KEY`
-- `OPENAI_MODEL`
-- `DATABASE_URL`
-- `NEXT_PUBLIC_APP_NAME`
-- `NEXT_TELEMETRY_DISABLED`
-
-## プライバシー方針
-
-- 会話本文をブラウザキャッシュ、localStorage、sessionStorage、IndexedDBに保存しません。
-- 本人同意なしに家族共有しません。
-- 音声入力はWeb Speech APIを使い、録音ファイルを生成・保存しません。
-- 読み上げはブラウザの `speechSynthesis` を使い、音声ファイルを生成・保存しません。
-- OpenAI Responses API呼び出しでは `store: false` を指定します。
-- 医療診断、認知症診断、治療判断はしません。
-
-## 今後の拡張
-
-- ログイン
-- 家族共有
-- 行政イベント提案
-- ロボット連携
-- 長期利用分析
-- 4週間評価
+テストでは画面の権限拒否、ユーザー・会話切り替え、ログアウト時のデータ消去、グラフの欠損値・前回値維持・吹き出し表示を確認します。Firebase SDK・DOMはモックのため、本番のログインとデータ取得は起動後に確認してください。取得APIの認証・ユーザー分離のテストは `challenge_atom` 側で管理します。

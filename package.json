@@ -1,38 +1,20 @@
 {
-  "name": "challenge-atom",
-  "version": "0.1.0",
+  "name": "challenge-atom-tatsu",
   "private": true,
-  "scripts": {
-    "dev": "next dev",
-    "build": "prisma generate && next build",
-    "start": "next start",
-    "lint": "eslint",
-    "test:memory": "node --experimental-strip-types --test tests/memoryRetrieval.test.mjs tests/memoryRetrievalEvaluation.test.mjs tests/memoryManagement.test.mjs tests/memoryConfirmation.test.mjs tests/conversationPolicy.test.mjs tests/replyValidation.test.mjs",
-    "test:wellbeing": "node --experimental-strip-types --test tests/wellbeing.test.mjs tests/googleHealthParsing.test.mjs",
-    "evaluate:memory": "node --experimental-strip-types scripts/evaluateMemoryRetrieval.mjs",
-    "prisma:generate": "prisma generate",
-    "prisma:push": "prisma db push",
-    "clean:cache": "rm -rf .next .turbo .vercel/output node_modules/.cache .cache",
-    "clean:all": "rm -rf .next .turbo .vercel/output node_modules/.cache .cache && npm cache verify",
-    "test:state-vector": "node --experimental-strip-types --test tests/stateVector.test.mjs tests/emotionState.test.mjs tests/emotionInference.test.mjs"
+  "type": "module",
+  "engines": {
+    "node": ">=22"
   },
-  "dependencies": {
-    "@prisma/adapter-pg": "^7.8.0",
-    "@prisma/client": "^7.8.0",
-    "next": "16.2.9",
-    "openai": "^6.45.0",
-    "prisma": "^7.8.0",
-    "react": "19.2.4",
-    "react-dom": "19.2.4"
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prestart": "npm run build",
+    "start": "firebase emulators:start --only hosting --project challenge-atom-1c763",
+    "pretest": "npm run build",
+    "test": "node --import tsx --test tests/*.test.mjs",
+    "deploy": "firebase deploy --only hosting --project challenge-atom-1c763"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.2.9",
-    "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "5.9.3",
+    "tsx": "4.23.15"
   }
 }
