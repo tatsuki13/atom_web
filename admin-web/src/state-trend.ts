@@ -35,8 +35,18 @@ export function axisLabel(point: TrendPoint, key: AxisKey): string {
   if (score(point,key) === null) return `未推定（${reason}）`;
   return axis?.status === 'held' ? `▲ ${reason}のため前回値を維持` : axis?.status === 'estimated' ? '● 推定済み' : '● 従来のキーワード推定';
 }
-export function trendGeometry(points: TrendPoint[], key: AxisKey) {
-  const xs = points.map((_, i) => points.length > 1 ? 46 + i / (points.length - 1) * 560 : 326);
+export function chronologicalPoints(points:TrendPoint[]):TrendPoint[] {
+  const timestamp=(point:TrendPoint) => {
+    const time=point.createdAt ? Date.parse(point.createdAt) : NaN;
+    return Number.isFinite(time) ? time : Infinity;
+  };
+  // Stable sort preserves API order for equal or unavailable timestamps.
+  return [...points].sort((a,b)=>(timestamp(a)-timestamp(b)) || 0);
+}
+function trendPositions(total:number) {
+  return Array.from({length:total},(_,i)=>total>1 ? 46+i/(total-1)*560 : 326);
+}
+export function trendGeometry(points: TrendPoint[], key: AxisKey, xs=trendPositions(points.length)) {
   let drawing = false;
   const path = points.map((point,i) => {
     const value = score(point,key);
@@ -90,7 +100,7 @@ export function renderStateTrend(container:HTMLElement, input:TrendPoint[]|undef
   title.append(html('h2','状態の推移'));
   container.append(title);
   if(input === undefined) {container.append(html('p','履歴を取得できませんでした。','muted small'));return;}
-  const points = input;
+  const points = chronologicalPoints(input);
   if(!points.length){container.append(html('p','この会話には状態の記録がありません。','muted small'));return;}
   if(truncated) container.append(html('p','直近500メッセージの履歴を表示','muted small'));
   title.append(html('span',`${points.length}発話 · 発話順`,'trend-meta'));
@@ -109,10 +119,12 @@ export function renderStateTrend(container:HTMLElement, input:TrendPoint[]|undef
   const rangeLabel = html('label','発話をたどる','sr-only');rangeLabel.htmlFor = 'trend-position';
   const slider = html('input');slider.id = 'trend-position';slider.type = 'range';slider.min='0';slider.max=String(points.length-1);slider.disabled=points.length===1;
   const selectedDate = html('p',undefined,'muted small');
+  const selectedContent = html('blockquote',undefined,'trend-utterance');
+  selectedContent.setAttribute('aria-label','全グラフで選択中の発言');
   const visibleRange = html('p',undefined,'muted small');
   visibleRange.setAttribute('aria-live','polite');
   selectedHeading.setAttribute('aria-live','polite');
-  detail.append(heading,rangeLabel,slider,selectedDate,visibleRange);
+  detail.append(heading,rangeLabel,slider,selectedDate,selectedContent,visibleRange);
   const select = (next:number,key:AxisKey|null=null) => {index = Math.max(0,Math.min(points.length-1,next));activeAxis=key;update();};
   previousButton.addEventListener('click',()=>select(index-1));nextButton.addEventListener('click',()=>select(index+1));slider.addEventListener('input',()=>select(Number(slider.value)));
   function update() {
@@ -122,11 +134,15 @@ export function renderStateTrend(container:HTMLElement, input:TrendPoint[]|undef
     const window = trendWindow(points.length,index,windowStart);
     windowStart=window.start;
     const visiblePoints=points.slice(window.start,window.end), selectedIndex=index-window.start;
+    // Every axis uses the same utterance slots, including unestimated values.
+    const xs=trendPositions(visiblePoints.length);
+    const tickIndices=[...new Set([0,Math.floor((visiblePoints.length-1)/2),visiblePoints.length-1])];
     visibleRange.textContent=`グラフ表示：発話 ${window.start+1}〜${window.end} / ${points.length}（最大30発話・等間隔）`;
     selectedHeading.textContent = `発話 ${index+1} / ${points.length}`;
     previousButton.disabled = index === 0;nextButton.disabled = index === points.length-1;slider.value=String(index);
     slider.setAttribute('aria-valuetext',`${index+1}番目の発話、${formatDate(selected.createdAt)}`);
     selectedDate.textContent = formatDate(selected.createdAt);charts.replaceChildren();
+    selectedContent.textContent=selected.content || 'この発言の本文は取得できませんでした。';
     for(const {key,label,color,low,high} of dimensions) {
       const currentScore = score(selected,key), previousScore = score(previous,key);
       const delta = previous?.conversationId === selected.conversationId && currentScore !== null && previousScore !== null ? currentScore-previousScore : null;
@@ -136,13 +152,16 @@ export function renderStateTrend(container:HTMLElement, input:TrendPoint[]|undef
       comparison.append(stateLabel,html('span',`前回比 ${delta === null ? '—' : `${delta>0 ? '+' : ''}${delta.toFixed(2)}`}`));
       const card = html('div',undefined,'trend-chart'), title = html('div',undefined,'section-heading');
       title.append(html('h3',label),html('span',displayScore(currentScore)));card.append(title,html('p',`−1 ${low} ↔ +1 ${high}`,'axis-description'));
-      const geometry = trendGeometry(visiblePoints,key);
-      const graph = svg('svg',{viewBox:'0 0 640 172',role:'group','aria-label':`${label}の推移。発話${window.start+1}〜${window.end}を発話順に等間隔で表示。選択した発話の値は${displayScore(currentScore)}。点を押すと発言を確認できます。`});
+      const geometry = trendGeometry(visiblePoints,key,xs);
+      const graph = svg('svg',{viewBox:'0 0 640 192',role:'group','aria-label':`${label}の推移。発話${window.start+1}〜${window.end}を発話順に等間隔で表示。全グラフで発話${index+1}を選択中。選択した発話の値は${displayScore(currentScore)}。点を押すと発言を確認できます。`});
       for(const tick of [-1,-.5,0,.5,1]) {
         const y = 90-tick*60;
         graph.append(svg('line',{x1:46,x2:606,y1:y,y2:y,stroke:tick===0 ? '#9baea4' : '#e1e9e5','stroke-width':tick===0 ? 2 : 1}),svg('text',{x:38,y:y+6,'text-anchor':'end',fill:'#63756f','font-size':16},`${tick>0 ? '+' : ''}${tick.toFixed(1)}`));
       }
       graph.append(svg('line',{x1:geometry.xs[selectedIndex],x2:geometry.xs[selectedIndex],y1:25,y2:153,stroke:'#8b9eac','stroke-dasharray':'4 4'}),svg('path',{d:geometry.path,fill:'none',stroke:color,'stroke-width':3}));
+      for(const i of tickIndices) {
+        graph.append(svg('text',{x:xs[i],y:180,'text-anchor':'middle',fill:'#63756f','font-size':16},`発話${window.start+i+1}`));
+      }
       visiblePoints.forEach((point,i)=>{
         const value = score(point,key);if(value === null)return;
         const x = geometry.xs[i],y=90-value*60,r=i===selectedIndex ? 7:5;
@@ -201,7 +220,7 @@ export function renderStateTrend(container:HTMLElement, input:TrendPoint[]|undef
   legend.append(html('span','● 推定　▲ 前回値を維持 · 点をクリックすると発言を表示'));
   const help = html('details',undefined,'trend-help');
   help.append(html('summary','表示について'),html('p','各軸は−1〜＋1、0.25刻みの9段階が基準です。0は快・不快では中立、それ以外では中程度を表します。負の値が悪い状態を意味するとは限りません。未推定の初期値0は表示せず、線を途切れさせます。▲は前回値の維持、前回比は直前の発話との差です。旧形式の0〜1の値は−1〜＋1へ換算し、最も近い0.25刻みに丸めています（旧形式でも快・不快は符号を維持）。符号付きの記録は元の値を表示します。軸は互いに独立し、診断や気持ちの断定ではありません。'));
-  help.append(html('p','横軸は時間の長さではなく、発話順の等間隔です。最初は直近30発話を表示します。スライダーや「前へ・次へ」で取得済みの全履歴をたどると、選択した発話が見えるよう表示範囲が移動します。'));
+  help.append(html('p','全グラフで同じ発話順・表示範囲・選択位置を共有します。横軸は日時順に並べた発話の等間隔で、時間の長さは表しません。同じ日時の発話は取得順、日時未記録の発話は末尾に取得順で表示します。最初は直近30発話を表示します。スライダーや「前へ・次へ」、各グラフの点で発話を選ぶと、全グラフと上の発言本文が一緒に切り替わります。未推定の軸でも、その発話の横軸位置は変わりません。'));
   legend.append(help);
   container.append(detail,charts,legend,popup);update();
 }

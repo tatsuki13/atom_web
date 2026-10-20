@@ -79,6 +79,7 @@ button.secondary:hover { background: #f2f6f3; }
 .trend-meta { font-size: 12px; color: var(--muted); white-space: nowrap; }
 .trend-detail { margin: 20px 0; padding: 16px 18px; border-radius: 10px; background: #f5f8f6; }
 .trend-detail h3 { font-size: 13px; font-weight: 600; }
+.trend-utterance { margin: 12px 0; padding: 10px 12px; border-left: 3px solid #b0c6b8; font-size: 13px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
 .trend-controls { display: flex; gap: 6px; }
 .trend-controls button { min-height: 36px; padding: 7px 12px; font-size: 12px; }
 .trend-detail label { font-size: 12px; margin-top: 12px; color: var(--muted); }

@@ -73,3 +73,98 @@ npm test
 グラフの編集元は `admin-web/src/state-trend.ts` です。生成物 `admin-web/state-trend.js` はGit管理せず、起動・テスト・デプロイ前に自動ビルドします。`challenge_atom/functions/node_modules` への依存はありません。
 
 テストでは画面の権限拒否、ユーザー・会話切り替え、ログアウト時のデータ消去、グラフの欠損値・前回値維持・吹き出し表示を確認します。Firebase SDK・DOMはモックのため、本番のログインとデータ取得は起動後に確認してください。取得APIの認証・ユーザー分離のテストは `challenge_atom` 側で管理します。
+
+## チーム向け：ブランチでの開発とGitHubへの反映
+
+編集内容によって変わるのは、ローカルで変更を反映・確認する方法です。GitHubへ上げる操作は共通です。以下はすべて `atom_web` フォルダ内で実行します。
+
+### 1. 最新コードを取得し、作業ブランチを作る
+
+`git status` で作業途中の変更がないことを確認します。変更がある場合は、先にその作業をコミットするなどして保存してください。ブランチ名の `codex/update-viewer` は今回の作業に合った名前に変えます。
+
+```sh
+git status
+git switch main
+git pull --ff-only origin main
+git switch -c codex/update-viewer
+npm ci
+npm start
+```
+
+`npm ci` は初回、別フォルダにcloneしたとき、または取得した変更で依存関係・lockfileが更新されたときに実行します。毎回必須ではありません。
+
+`npm start` はTypeScriptをビルドしてからローカルサーバーを起動します。[http://127.0.0.1:5002](http://127.0.0.1:5002) を開き、ターミナルは起動したままにします。終了は `Ctrl+C` です。追加のコマンドは、別のターミナルで同じフォルダを開いて実行できます。
+
+ローカルで配信する画面から、本番Firebaseの認証・取得APIに接続します。
+
+### 2. 編集したファイルに応じて反映する
+
+| 編集したもの | 対象ファイルの例 | ローカルへの反映・確認 |
+|---|---|---|
+| HTML | `admin-web/index.html` | 保存してブラウザを再読み込み |
+| CSS | `admin-web/styles.css` | 保存してブラウザを再読み込み |
+| JavaScript | `admin-web/app.js` | 保存してブラウザを再読み込み |
+| TypeScript（グラフ） | `admin-web/src/state-trend.ts` | 別ターミナルで `npm run build` → ブラウザを再読み込み |
+| テスト | `tests/` 内 | `npm test` |
+| Firebase設定 | `firebase.json`、`.firebaserc` | サーバーを `Ctrl+C` で終了 → `npm start` で再起動 |
+| 依存パッケージ | `package.json` の依存関係 | `npm install` → サーバーを再起動 |
+| 説明文 | `README.md` | 文章・コマンドの内容を確認。ビルド不要 |
+
+グラフは `admin-web/src/state-trend.ts` を編集します。自動生成される `admin-web/state-trend.js` は直接編集せず、Gitにも追加しません。現在は自動監視による再ビルドはないため、TypeScriptの編集後はビルドが必要です。
+
+開発用パッケージを追加する場合は、`パッケージ名` を実際の名前に置き換えて実行します。
+
+```sh
+npm install --save-dev パッケージ名
+```
+
+依存関係の変更では、`package.json` と `package-lock.json` の両方をコミットします。他のメンバーは変更取得後に `npm ci` を実行します。
+
+### 3. GitHubへ上げる前に確認する
+
+画面・コード・設定・テストを変更した場合は、次を実行します。
+
+```sh
+npm test
+git status
+git diff
+```
+
+`npm test` はビルドも自動実行するため、直前に別途 `npm run build` を実行する必要はありません。テスト成功後、ブラウザでも変更した部分の動作を確認します。READMEだけの変更であればテストは不要です。
+
+### 4. コミットして作業ブランチをpushする
+
+編集内容によらず、GitHubへ送る手順は共通です。
+
+```sh
+git add .
+git diff --cached
+git commit -m "管理画面の表示を改善"
+git push -u origin HEAD
+```
+
+`git diff --cached` で今回の作業に関係する変更だけが含まれていることを確認してからコミットします。コミットメッセージは変更内容に合わせます。`git add .` は現在のフォルダ以下の変更をまとめて追加するため、一部だけ上げる場合は `git add admin-web/styles.css` のようにファイルを指定してください。
+
+push後、GitHubで作業ブランチから `main` へのPull Request（PR）を作成します。レビュー後にマージします。`node_modules/`、生成された `admin-web/state-trend.js`、`.env` などは `.gitignore` でGitの対象から除外しています。
+
+同じブランチで追加修正するときも、確認 → `git add` → `git commit` → `git push` の手順です。pushすると既存のPRに追加の変更が反映されます。
+
+### 5. マージ後に公開担当者がデプロイする
+
+GitHubへのpush・PRのマージと、Firebaseへの公開は別の操作です。このリポジトリには現時点で自動デプロイの設定はありません。
+
+公開担当者は、作業途中の変更がない状態でマージ済みのコードを取得し、次を実行します。
+
+```sh
+git switch main
+git pull --ff-only origin main
+npm ci
+npm test
+npm run deploy
+```
+
+`npm run deploy` はビルドしてから、本番Firebaseプロジェクト `challenge-atom-1c763` の既存のHostingサイトを更新します。実行にはFirebase CLIへのログインと配置権限が必要です。各自のブランチをローカルで確認するときは `npm start` を使用します。
+
+このコマンドが公開するのはWeb画面だけです。Functions・Firestoreルール・認証アカウントの管理は `challenge_atom` 側で行います。READMEやテストだけの変更では、Web画面の再公開は不要です。
+
+普段の流れは「ブランチ作成 → 編集 → `npm test` → ブラウザで確認 → コミット・push → PR」です。本番公開はマージ後に公開担当者が行います。

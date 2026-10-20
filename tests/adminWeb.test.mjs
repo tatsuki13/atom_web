@@ -124,6 +124,49 @@ test('V2 history renders eight signed charts and omits unestimated zero markers'
   assert.equal(nodes.filter(node=>node.attributes.y1==='90' && node.attributes['stroke-width']==='2').length,8);
 });
 const loggedIn = (uid = 'admin-a', admin = true) => ({uid,getIdTokenResult:async () => ({claims:{admin}})});
+test('all axes share chronology, selection and window even with missing estimates',async()=>{
+  const {el,requests,submit}=await setup();
+  const keys=['positive_affect','interest','anxiety','loneliness','valence','arousal','energy','motivation'];
+  const history=Array.from({length:35},(_,i)=>({
+    id:String(i),conversationId:'c1',createdAt:new Date(Date.UTC(2026,9,16,0,i)).toISOString(),content:`発言本文${i}`,
+    emotionState:{...Object.fromEntries(keys.map(key=>[key,i/40])),_analysis:{version:'context-v4',axes:{anxiety:{status:i%2===0?'unestimated':'estimated'},loneliness:{status:'unestimated'}}}},
+  }));
+  el('target-login-id').value='target';submit();
+  requests[0].resolve({data:{...sample('target'),emotionHistory:[...history].reverse()}});await tick();
+  const walk=node=>[node,...node.children.flatMap(walk)];
+  const nodes=()=>walk(el('state-trend'));
+  const cards=()=>nodes().filter(node=>node.className==='trend-chart');
+  const slider=nodes().find(node=>node.id==='trend-position');
+  const check=(selected,start,end)=>{
+    assert.equal(cards().length,8);
+    assert.equal(nodes().find(node=>node.className==='trend-utterance').textContent,`発言本文${selected}`);
+    const x=String(46+(selected-start)/(end-start-1)*560);
+    cards().forEach(card=>{
+      const descendants=walk(card);
+      const cursor=descendants.find(node=>node.attributes['stroke-dasharray']==='4 4');
+      assert.equal(cursor.attributes.x1,x);
+      assert.ok(descendants.some(node=>node.textContent===`発話${start+1}`));
+      assert.ok(descendants.some(node=>node.textContent===`発話${end}`));
+      assert.ok(descendants.some(node=>node.attributes['aria-label']?.includes(`全グラフで発話${selected+1}を選択中`)));
+    });
+    const anxietyMarkers=walk(cards()[2]).filter(node=>node.attributes.role==='button');
+    anxietyMarkers.forEach(marker=>{
+      const utterance=Number(marker.attributes['aria-label'].match(/^発話(\d+)/)[1])-1;
+      assert.equal(marker.attributes.cx,String(46+(utterance-start)/(end-start-1)*560));
+    });
+    assert.ok(!walk(cards()[3]).some(node=>node.attributes.role==='button'));
+  };
+  check(34,5,35);
+  // Selecting a sparse axis updates every graph and the shared utterance.
+  walk(cards()[2]).find(node=>node.attributes.role==='button').listeners.click();
+  assert.equal(slider.value,'5');check(5,5,35);
+  assert.match(walk(el('state-trend').querySelector('.trend-popover')).map(node=>node.textContent).join(' '),/発言本文5/);
+  nodes().find(node=>node.textContent==='前へ').listeners.click();check(4,4,34);
+  slider.value='0';slider.listeners.input();check(0,0,30);
+  nodes().find(node=>node.textContent==='次へ').listeners.click();check(1,0,30);
+  slider.value='34';slider.listeners.input();check(34,5,35);
+  assert.equal(history[0].id,'0');
+});
 test('long histories show only thirty equally spaced points and navigation follows selection',async()=>{
   const {el,requests,submit}=await setup();
   el('target-login-id').value='target';submit();

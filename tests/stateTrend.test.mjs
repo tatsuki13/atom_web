@@ -1,7 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {trendGeometry,trendWindow,score,axisLabel,estimateOrigin} from '../admin-web/src/state-trend.ts';
+import {chronologicalPoints,trendGeometry,trendWindow,score,axisLabel,estimateOrigin} from '../admin-web/src/state-trend.ts';
 const point = (id,value,conversationId='c') => ({id,conversationId,createdAt:`2026-10-13T00:0${id}:00Z`,emotionState:{interest:value}});
+test('history sorts chronologically without mutating input or reordering tied and unknown dates',()=>{
+  const points=[point('2',.5),{...point('missing',.5),createdAt:null},point('0',.5),{...point('invalid',.5),createdAt:'invalid'},point('1',.5),{...point('tie',.5),createdAt:point('1',.5).createdAt}];
+  const original=[...points];
+  assert.deepEqual(chronologicalPoints(points).map(p=>p.id),['0','1','tie','2','missing','invalid']);
+  assert.deepEqual(points,original);
+});
 test('trend gaps are never connected or imputed as zero; zero is a valid estimate',()=>{
   const points=[point('0',0),point('1',null),point('2',.8),point('3',.9)];
   const graph=trendGeometry(points,'interest');
