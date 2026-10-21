@@ -144,6 +144,7 @@ export function renderStateTrend(container:HTMLElement, input:TrendPoint[]|undef
     selectedDate.textContent = formatDate(selected.createdAt);charts.replaceChildren();
     selectedContent.textContent=selected.content || 'この発言の本文は取得できませんでした。';
     for(const {key,label,color,low,high} of dimensions) {
+      if(key === 'interest') continue;
       const currentScore = score(selected,key), previousScore = score(previous,key);
       const delta = previous?.conversationId === selected.conversationId && currentScore !== null && previousScore !== null ? currentScore-previousScore : null;
       const stateLabel = html('p',currentScore === null ? '未推定' : axisLabel(selected,key).startsWith('▲') ? '▲ 前回値を維持' : axisLabel(selected,key),'muted small');

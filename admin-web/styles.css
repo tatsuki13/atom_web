@@ -77,6 +77,13 @@ button.secondary:hover { background: #f2f6f3; }
 .physical-card .metric strong { font-size: 23px; }
 .section-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .trend-meta { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.interest-topic { padding: 16px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+.interest-topic h3 { font-size: 14px; }
+.interest-tag { flex-shrink: 0; padding: 3px 8px; border-radius: 12px; background: #fff1d9; color: #795519; font-size: 11px; }
+.interest-value { margin-top: 8px; font-variant-numeric: tabular-nums; }
+.interest-details { margin-top: 12px; font-size: 12px; }
+.interest-details summary { cursor: pointer; }
+.interest-details p { margin-top: 8px; }
 .trend-detail { margin: 20px 0; padding: 16px 18px; border-radius: 10px; background: #f5f8f6; }
 .trend-detail h3 { font-size: 13px; font-weight: 600; }
 .trend-utterance { margin: 12px 0; padding: 10px 12px; border-left: 3px solid #b0c6b8; font-size: 13px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -160,3 +167,36 @@ button.secondary:hover { background: #f2f6f3; }
 @media (prefers-reduced-motion: no-preference) {
   button { transition: background-color .15s, border-color .15s; }
 }
+
+.interest-state-section { margin-top: 16px; }
+.interest-meter { height: 12px; background: #edf1f5; border-radius: 6px; overflow: hidden; margin-top: 8px; }
+.interest-meter-fill { display: block; height: 100%; background: #527ba5; border-radius: inherit; }
+.interest-blocks { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
+.interest-block { min-width: 0; width: 100%; padding: 16px; background: #f4f7fa; border: 1px solid var(--border); border-radius: 12px; overflow-wrap: anywhere; }
+.interest-block h3 { font-size: 16px; margin: 0 0 8px; }
+
+.interest-state-section .interest-topic:last-child { border-bottom: 0; padding-bottom: 0; }
+.interest-state-section .interest-value { font-size: 12px; color: var(--muted); }
+
+.interest-plot { overflow-x: auto; }
+.interest-plot svg { width: 100%; height: auto; max-width: none; }
+
+.interest-activity { display: inline-block; margin-bottom: 8px; padding: 3px 8px; border-radius: 12px; background: #e6edf3; color: #435c71; font-size: 12px; }
+.interest-excerpt { margin-top: 12px; }
+.interest-excerpt h4 { margin: 0; color: var(--muted); font-size: 12px; font-weight: 600; }
+.interest-excerpt p { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.interest-axis-switch { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 10px; }
+.interest-axis-switch button[aria-pressed="true"], .interest-keyword-buttons button[aria-pressed="true"] { background: #e5f0e9; color: #20533f; border-color: #6b9b82; }
+.interest-axis-note { margin: 10px 0; }
+.interest-quadrant svg { display: block; min-width: 640px; }
+.interest-quadrant g[role="button"] { cursor: pointer; }
+.interest-quadrant g[role="button"]:focus-visible { outline: none; }
+.interest-quadrant g[role="button"]:focus-visible circle { stroke-width: 4; }
+.interest-topic-list { margin-top: 8px; }
+.interest-keyword-buttons { display: flex; flex-wrap: wrap; gap: 6px; max-height: 180px; overflow-y: auto; padding: 8px 2px; }
+.interest-keyword-buttons button { min-height: 36px; padding: 6px 10px; font-size: 12px; white-space: normal; text-align: left; overflow-wrap: anywhere; }
+.interest-selection { margin-top: 12px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 10px; background: #f5f8f6; }
+.interest-selection h3 { margin: 0 0 8px; font-size: 15px; }
+.interest-selection p + p { margin-top: 6px; }
+.interest-selected-excerpt { font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }

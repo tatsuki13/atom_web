@@ -2,6 +2,7 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.0.0/firebas
 import { getAuth, setPersistence, browserSessionPersistence, signInWithEmailAndPassword, signOut, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-auth.js';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-functions.js';
 import { renderStateTrend, closeStateTrendPopup } from './state-trend.js';
+import { renderInterestRegistry, renderInterestChart } from './interest-registry.js';
 
 const $ = id => document.getElementById(id);
 let auth, load, authorized = false, revision = 0, selectedLoginId = '', selectedConversation = null;
@@ -16,7 +17,7 @@ function resetData() {
   closeStateTrendPopup($('state-trend'));
   revision++; selectedLoginId = ''; selectedConversation = null;
   $('results').hidden = true;
-  for (const id of ['metrics','physical','keywords','memories','conversation','state-trend']) $(id).replaceChildren();
+  for (const id of ['metrics','physical','interest-chart','keywords','memories','conversation','state-trend']) $(id).replaceChildren();
   for (const id of ['target-id','target-name','target-uid']) $(id).textContent = '';
   $('user-details').open = false;
   $('user-avatar').textContent = '';
@@ -63,7 +64,8 @@ function render(data) {
   const physical = data.physicalSignals ?? {};
   metrics('physical',[['歩数',physical.steps,'歩'],['睡眠時間',physical.sleepMinutes == null ? null : (physical.sleepMinutes / 60).toFixed(1),'時間'],['安静時心拍数',physical.restingHeartRate,'bpm']]);
   $('physical-note').textContent = data.physicalSignals ? `更新: ${date(physical.recordedAt)}` : '記録がありません。';
-  $('keywords').replaceChildren(...(data.interestKeywords?.length ? data.interestKeywords.map(k => element('span',k.keyword,'chip')) : [element('p','登録がありません。','muted')]));
+  renderInterestChart($('interest-chart'), data.interestKeywords ?? []);
+  renderInterestRegistry($('keywords'), data.interestKeywords ?? [], data.memories ?? []);
   const memories = data.memories ?? [];
   $('memory-count').textContent = `${memories.length}件`;
   $('memories').replaceChildren(...(memories.length ? memories.map(memory => {
@@ -143,7 +145,8 @@ async function initialize() {
     if (!config.projectId || !config.apiKey) throw new Error('configuration');
     const app = initializeApp(config);
     auth = getAuth(app); await setPersistence(auth,browserSessionPersistence);
-    load = httpsCallable(getFunctions(app,'asia-northeast1'),'adminConversationViewer');
+    const functions = getFunctions(app,'asia-northeast1');
+    load = httpsCallable(functions,'adminConversationViewer');
     onIdTokenChanged(auth, async user => {
       const check = ++authRevision;
       const sameAdmin = authorized && user?.uid === verifiedAdminUid;

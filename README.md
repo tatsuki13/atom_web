@@ -13,13 +13,15 @@ npm start
 
 [http://localhost:5002](http://localhost:5002)を開きます。ローカル起動でも認証・取得APIは本番Firebase (`challenge-atom-1c763`) に接続します。
 
-Web画面だけを公開する場合:
+Web画面の変更は作業ブランチで行い、次のコマンドでプレビュー環境を発行します。`codex-update-viewer`は作業ブランチ名に置き換えてください。
 
 ```sh
-npm run deploy
+npm run build && firebase hosting:channel:deploy codex-update-viewer --project challenge-atom-1c763
 ```
 
-Firebase CLIへのログインと対象プロジェクトへのHosting配置権限が必要です。既存のデフォルトHostingサイトを更新するため、公開先を変更する場合は `firebase.json` の `hosting.site` を設定してください。
+発行されたURLで動作確認してからPull Request（PR）を作成します。コードとプレビュー環境をリポジトリ管理者が確認し、問題がなければ管理者が`main`へマージします。本番公開はマージ後に公開担当者が行います。
+
+Firebase CLIへのログインと対象プロジェクトへのHosting配置権限が必要です。本番公開では既存のデフォルトHostingサイトを更新するため、公開先を変更する場合は `firebase.json` の `hosting.site` を設定してください。
 
 ## リポジトリの役割
 
@@ -30,7 +32,7 @@ Firebase Authentication、Firestore、取得API `adminConversationViewer` は既
 APIの変更・配置が必要な場合は、`challenge_atom` のルートで実行します:
 
 ```sh
-firebase deploy --only functions:conversation:adminConversationViewer --project challenge-atom-1c763
+firebase deploy --only functions:conversation:conversationChat,functions:conversation:conversationState,functions:conversation:adminConversationViewer --project challenge-atom-1c763
 ```
 
 ## 使い方
@@ -42,7 +44,7 @@ firebase deploy --only functions:conversation:adminConversationViewer --project 
 
 ## 権限・データ
 
-管理者APIは認証と`admin: true`のcustom claimを確認した後、`{ログインID}@internal.local`からUIDを特定して読み取ります。検索はログインIDのみです。UIDをキーにした既存の保存先は変更せず、移行も不要です。同じ管理者の認証更新では閲覧状態を維持し、ログアウト・アカウント変更・権限取消時はデータを消去します。記憶の変更・削除機能はありません。Firestoreルールとアプリの表示設定も変更していません。
+管理者APIは認証と`admin: true`のcustom claimを確認した後、`{ログインID}@internal.local`からUIDを特定して読み取ります。検索はログインIDのみで指定します。UIDをキーにした既存の保存先は変更せず、移行も不要です。同じ管理者の認証更新では閲覧状態を維持し、ログアウト・アカウント変更・権限取消時はデータを消去します。保存済みの記憶本文の変更・削除機能はありません。Firestoreルールとアプリの表示設定も変更していません。
 
 取得範囲:
 
@@ -57,7 +59,15 @@ firebase deploy --only functions:conversation:adminConversationViewer --project 
 
 グラフの横軸は発話順の等間隔で、最初は直近30発話を表示します。スライダーは取得済みの全履歴を対象とし、「前へ・次へ」や点のクリックでも発話を選択できます。選択が表示範囲を外れると、最大30発話の範囲が追従します。発話日時と表示中の発話番号も確認できます。
 
-状態グラフは肯定的感情・関心と興味・不安・孤独感・快と不快・活性度・元気さ・行動への意欲の8軸を表示します。縦軸は−1〜＋1、0を中央にした共通スケールで、V2の9段階（0.25刻み）に対応します。各カードに両端の意味を表示し、正負による良し悪しの色分けは行いません。
+状態の時系列グラフは肯定的感情・不安・孤独感・快と不快・活性度・元気さ・行動への意欲の7軸を表示します。縦軸は−1〜＋1、0を中央にした共通スケールで、V2の9段階（0.25刻み）に対応します。各カードに両端の意味を表示し、正負による良し悪しの色分けは行いません。既存の発話ごとの`interest`値は変更せず、画面の時系列表示からのみ除外しています。
+
+状態タブには全会話を通じた興味・関心を四象限グラフで表示します。縦軸は興味の方向、横軸は活動状況（既定）と本人の自発性を切り替えます。活動状況はactive＝右、paused＝左の分類で、頻度の数値を創作しません。自発性はサーバーの`spontaneityScore`（0〜1）を使います。座標が欠ける旧データは未判定の一覧に残し、0は有効な値として扱います。縦位置は最新の`explicitPolarity`の明言を優先（positiveは上側、negativeは下側）し、それ以外は`interestScore`を使います。確かさ`confidence`は点の濃さ、推定中は点の破線で示します。根拠量に基づく目安であり、校正された確率ではありません。重なる点のキーワードは引き出し線で配置し、下の一覧からもマウス・キーボードで詳細を選べます。記憶タブは確定済みかつ明示的否定でない項目だけを表示します。`details`の本人発言を「好きな点」「きっかけ」「経験」に分け、従来の`sourceMemoryIds`の記憶と併記します。Web側で確定状態や保存データを書き換えません。
+
+興味・関心は会話AIが会話から自動で蓄積・更新します。このWeb画面は閲覧専用で、手動の登録・割合修正・確定・削除の操作や編集APIの呼び出しはありません。キーワードのブロックには最後に話題が出た日時と、活動状況がある場合に「活動中」「休止中」を表示します。休止中だけでは興味なしにせず、推定中から確定への変更もしません。状態タブの四象限グラフでも活動状況と「興味なしの明言あり」を区別します。古いAPIで追加フィールドがなくても従来表示を維持します。
+
+「更新」で`adminConversationViewer`を再取得します。ユーザー切り替え・会話切り替え・ログアウト・権限取消後に遅れて届いた応答は画面へ反映しません。
+
+Functionsの変更を伴う場合は、先に`challenge_atom`で上記3つのFunctionsをデプロイしてください。Web画面の変更は、このリポジトリで`npm test`を実行し、ブランチのプレビューURLで動作確認してからPRを作成します。本番Hostingへの公開は`main`へのマージ後に公開担当者が行います。
 
 旧キーワード推定と`context-v1`の4軸、および`context-v2`の各軸は、0〜1から`2 * 値 - 1`で換算し、最も近い0.25刻みに丸めます（`context-v2`の`valence`は元から符号付きのため換算しません）。`context-v3` / `context-v4`は元の符号付き値を表示します。未推定の初期値0は中程度と区別し、値も点も表示しません。旧記録にない追加軸も未推定です。換算は表示時だけで、保存データや推定APIは変更しません。現在の推定APIが4軸を保存している場合、追加4軸はV2形式の記録が保存されるまで未推定になります。
 
@@ -76,17 +86,17 @@ npm test
 
 ## チーム向け：ブランチでの開発とGitHubへの反映
 
-編集内容によって変わるのは、ローカルで変更を反映・確認する方法です。GitHubへ上げる操作は共通です。以下はすべて `atom_web` フォルダ内で実行します。
+Web画面の編集は必ず作業ブランチで行います。編集後はテストとFirebase HostingのプレビューURLで動作確認を行い、PRを作成します。リポジトリ管理者がコードとプレビュー環境を確認し、問題がなければ管理者が`main`へマージします。以下はすべて `atom_web` フォルダ内で実行します。
 
 ### 1. 最新コードを取得し、作業ブランチを作る
 
-`git status` で作業途中の変更がないことを確認します。変更がある場合は、先にその作業をコミットするなどして保存してください。ブランチ名の `codex/update-viewer` は今回の作業に合った名前に変えます。
+`git status` で作業途中の変更がないことを確認します。変更がある場合は、先にその作業をコミットするなどして保存してください。ブランチ名の `codex-update-viewer` は今回の作業に合った名前に変えます。プレビューチャンネル名にも使うため、英数字とハイフンを使います。
 
 ```sh
 git status
 git switch main
 git pull --ff-only origin main
-git switch -c codex/update-viewer
+git switch -c codex-update-viewer
 npm ci
 npm start
 ```
@@ -132,7 +142,21 @@ git diff
 
 `npm test` はビルドも自動実行するため、直前に別途 `npm run build` を実行する必要はありません。テスト成功後、ブラウザでも変更した部分の動作を確認します。READMEだけの変更であればテストは不要です。
 
-### 4. コミットして作業ブランチをpushする
+### 4. プレビュー環境を発行して動作確認する
+
+Web画面を変更した場合は、作業ブランチで次を実行します。`codex-update-viewer`は現在のブランチ名に置き換えてください。
+
+```sh
+npm run build && firebase hosting:channel:deploy codex-update-viewer --project challenge-atom-1c763
+```
+
+`npm run build`と`firebase hosting:channel:deploy`は別のコマンドです。`&&`でつなぎ、ビルドが成功した場合だけプレビューへ配置します。
+
+コマンドの出力に表示されたプレビューURLをブラウザで開き、ログイン・データ取得と変更箇所の動作を確認します。修正した場合はテストと同じチャンネルへのデプロイを再実行し、プレビューURLで再確認してください。プレビュー環境も本番Firebaseの認証・取得APIに接続します。
+
+READMEだけの変更であれば、プレビュー環境の発行と画面の動作確認は不要です。
+
+### 5. コミットして作業ブランチをpushし、PRを作成する
 
 編集内容によらず、GitHubへ送る手順は共通です。
 
@@ -145,11 +169,13 @@ git push -u origin HEAD
 
 `git diff --cached` で今回の作業に関係する変更だけが含まれていることを確認してからコミットします。コミットメッセージは変更内容に合わせます。`git add .` は現在のフォルダ以下の変更をまとめて追加するため、一部だけ上げる場合は `git add admin-web/styles.css` のようにファイルを指定してください。
 
-push後、GitHubで作業ブランチから `main` へのPull Request（PR）を作成します。レビュー後にマージします。`node_modules/`、生成された `admin-web/state-trend.js`、`.env` などは `.gitignore` でGitの対象から除外しています。
+プレビューURLで動作確認できたら、push後にGitHubで作業ブランチから`main`へのPull Request（PR）を作成します。PR本文には変更内容、テスト結果、プレビューURL、プレビューで確認した内容を記載してください。READMEだけの変更では、プレビュー確認を省略した旨を記載します。コードとプレビュー環境をリポジトリ管理者が確認し、問題がなければ管理者が`main`へマージします。作業者はマージせず、レビューを待ちます。
 
-同じブランチで追加修正するときも、確認 → `git add` → `git commit` → `git push` の手順です。pushすると既存のPRに追加の変更が反映されます。
+`node_modules/`、生成された `admin-web/state-trend.js`、`.env` などは `.gitignore` でGitの対象から除外しています。
 
-### 5. マージ後に公開担当者がデプロイする
+同じブランチで追加修正するときも、確認 → `git add` → `git commit` → `git push` の手順です。pushすると既存のPRに追加の変更が反映されます。Web画面の追加修正では、プレビューも再デプロイして動作確認し、PRの確認結果を更新してください。
+
+### 6. マージ後に公開担当者がデプロイする
 
 GitHubへのpush・PRのマージと、Firebaseへの公開は別の操作です。このリポジトリには現時点で自動デプロイの設定はありません。
 
@@ -163,8 +189,8 @@ npm test
 npm run deploy
 ```
 
-`npm run deploy` はビルドしてから、本番Firebaseプロジェクト `challenge-atom-1c763` の既存のHostingサイトを更新します。実行にはFirebase CLIへのログインと配置権限が必要です。各自のブランチをローカルで確認するときは `npm start` を使用します。
+`npm run deploy` はビルドしてから、本番Firebaseプロジェクト `challenge-atom-1c763` の既存のHostingサイトを更新します。実行にはFirebase CLIへのログインと配置権限が必要です。各自のブランチをローカルで確認するときは`npm start`、レビュー用のプレビューを発行するときは手順4のコマンドを使用します。
 
 このコマンドが公開するのはWeb画面だけです。Functions・Firestoreルール・認証アカウントの管理は `challenge_atom` 側で行います。READMEやテストだけの変更では、Web画面の再公開は不要です。
 
-普段の流れは「ブランチ作成 → 編集 → `npm test` → ブラウザで確認 → コミット・push → PR」です。本番公開はマージ後に公開担当者が行います。
+普段の流れは「ブランチ作成 → 編集 → `npm test` → プレビュー発行 → 発行されたURLで動作確認 → コミット・push → PR作成 → 管理者がコードとプレビューを確認 → 管理者が`main`へマージ」です。本番公開はマージ後に公開担当者が行います。
