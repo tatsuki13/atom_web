@@ -169,6 +169,7 @@ button.secondary:hover { background: #f2f6f3; }
 }
 
 .interest-state-section { margin-top: 16px; }
+.interest-state-section > .trend-chart { grid-column: 1 / -1; }
 .interest-meter { height: 12px; background: #edf1f5; border-radius: 6px; overflow: hidden; margin-top: 8px; }
 .interest-meter-fill { display: block; height: 100%; background: #527ba5; border-radius: inherit; }
 .interest-blocks { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 16px; }

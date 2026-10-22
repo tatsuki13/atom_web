@@ -73,11 +73,10 @@ export function renderInterestChart(container, items) {
     graph.append(svg('rect',{x:left,y:top,width:right-left,height:bottom-top,fill:'none',stroke:'#cfddd5',rx:8}));
     graph.append(svg('line',{x1:left,x2:right,y1:middleY,y2:middleY,stroke:'#9eb4a8','stroke-dasharray':'5 5'}));
     graph.append(svg('line',{x1:middleX,x2:middleX,y1:top,y2:bottom,stroke:'#9eb4a8','stroke-dasharray':'5 5'}));
-    graph.append(svg('text',{x:28,y:48,fill:'#355c4c','font-size':14},'興味あり ↑'));
-    graph.append(svg('text',{x:28,y:middleY+5,fill:'#77877f','font-size':12},'中立'));
-    graph.append(svg('text',{x:28,y:bottom+28,fill:'#796a5d','font-size':14},'興味なし ↓'));
-    graph.append(svg('text',{x:left,y:454,fill:'#4c6358','font-size':14},activity ? '← やっていない・休止中' : '← 聞かれて話す'));
-    graph.append(svg('text',{x:right,y:454,'text-anchor':'end',fill:'#4c6358','font-size':14},activity ? 'やっている →' : '自分から話す →'));
+    graph.append(svg('text',{x:middleX,y:top-20,'text-anchor':'middle',fill:'#355c4c','font-size':14},'興味あり'));
+    graph.append(svg('text',{x:middleX,y:bottom+28,'text-anchor':'middle',fill:'#796a5d','font-size':14},'興味なし'));
+    graph.append(svg('text',{x:left/2,y:middleY+5,'text-anchor':'middle',fill:'#4c6358','font-size':12},activity ? 'やっていない' : '聞かれて話す'));
+    graph.append(svg('text',{x:(right+820)/2,y:middleY+5,'text-anchor':'middle',fill:'#4c6358','font-size':12},activity ? 'やっている' : '自分から話す'));
     graph.append(svg('text',{x:middleX,y:490,'text-anchor':'middle',fill:'#77877f','font-size':12},'点の濃さ：根拠の確かさの目安　　破線の点：推定中'));
     const occupied = [];
     const placeLabel = (x,y,width) => {
