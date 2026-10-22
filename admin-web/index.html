@@ -53,6 +53,7 @@
             <div class="card state-card">
               <div class="conversation-toolbar"><label for="conversation">会話履歴</label><select id="conversation"></select><p id="conversation-note" class="muted small" hidden></p></div>
               <div id="state-trend"></div>
+              <div class="trend-charts interest-state-section"><section class="trend-chart" aria-labelledby="interest-state-heading"><div class="section-heading"><h3 id="interest-state-heading">興味・関心</h3><span>現在の推定値</span></div><p class="axis-description">横軸を切り替えて、話題ごとの関心と活動を確認できます。</p><div id="interest-chart"></div></section></div>
             </div>
             <aside class="card physical-card">
               <h2>身体データ</h2>
@@ -60,13 +61,13 @@
               <p id="physical-note" class="muted small" role="status" aria-live="polite"></p>
               <button id="physical-refresh" class="secondary" disabled>身体データを更新</button>
               <p class="muted small physical-help">Androidアプリを開くと同期します。初回はアプリでHealth Connectとの連携を許可してください。同期後にこの画面の「身体データを更新」を押してください。</p>
-              <p class="muted small physical-help">アプリを開いていない間は前回保存したデータです。睡眠時間は睡眠セッションの合計です。歩数は記録がない場合も0歩になることがあります。</p>
+              <p class="muted small physical-help">表示するのは最終同期時点の保存データです。アプリで自動同期を設定しても、実行が遅れる場合があります。睡眠時間は睡眠セッションの合計です。歩数は記録がない場合も0歩になることがあります。</p>
             </aside>
           </div>
         </section>
         <section id="memory-panel" role="tabpanel" aria-labelledby="memory-tab" hidden>
           <div class="memory-layout">
-            <aside class="card interest-card"><h2>興味・関心</h2><div id="keywords" class="chips"></div></aside>
+            <aside class="card interest-card"><h2>興味・関心</h2><div id="keywords"></div></aside>
             <div class="card memories-card"><div class="section-heading"><h2>記憶</h2><span id="memory-count" class="badge"></span></div><div id="memories"></div><p id="memory-note" class="muted small" hidden></p></div>
           </div>
         </section>

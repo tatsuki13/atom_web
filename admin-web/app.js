@@ -3,6 +3,7 @@ import { getAuth, setPersistence, browserSessionPersistence, signInWithEmailAndP
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-functions.js';
 import { getFirestore, collection, query, where, orderBy, limit, getDocsFromServer } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js';
 import { renderStateTrend, closeStateTrendPopup } from './state-trend.js';
+import { renderInterestRegistry, renderInterestChart } from './interest-registry.js';
 
 const $ = id => document.getElementById(id);
 let auth, db, load, authorized = false, revision = 0, selectedLoginId = '', selectedConversation = null;
@@ -20,7 +21,7 @@ function resetData() {
   $('physical-note').textContent = '';
   $('physical-refresh').disabled = true;
   $('physical').setAttribute('aria-busy','false');
-  for (const id of ['metrics','physical','keywords','memories','conversation','state-trend']) $(id).replaceChildren();
+  for (const id of ['metrics','physical','interest-chart','keywords','memories','conversation','state-trend']) $(id).replaceChildren();
   for (const id of ['target-id','target-name','target-uid']) $(id).textContent = '';
   $('user-details').open = false;
   $('user-avatar').textContent = '';
@@ -65,7 +66,8 @@ function render(data) {
   $('conversation-note').hidden = !data.limits?.conversations;
   renderStateTrend($('state-trend'), data.emotionHistory, data.limits?.emotionHistory === true);
   renderPhysical(null);
-  $('keywords').replaceChildren(...(data.interestKeywords?.length ? data.interestKeywords.map(k => element('span',k.keyword,'chip')) : [element('p','登録がありません。','muted')]));
+  renderInterestChart($('interest-chart'), data.interestKeywords ?? []);
+  renderInterestRegistry($('keywords'), data.interestKeywords ?? [], data.memories ?? []);
   const memories = data.memories ?? [];
   $('memory-count').textContent = `${memories.length}件`;
   $('memories').replaceChildren(...(memories.length ? memories.map(memory => {
@@ -211,7 +213,8 @@ async function initialize() {
     const app = initializeApp(config);
     db = getFirestore(app);
     auth = getAuth(app); await setPersistence(auth,browserSessionPersistence);
-    load = httpsCallable(getFunctions(app,'asia-northeast1'),'adminConversationViewer');
+    const functions = getFunctions(app,'asia-northeast1');
+    load = httpsCallable(functions,'adminConversationViewer');
     onIdTokenChanged(auth, async user => {
       const check = ++authRevision;
       const sameAdmin = authorized && user?.uid === verifiedAdminUid;
