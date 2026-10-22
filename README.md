@@ -58,13 +58,13 @@ AndroidアプリでFirebaseにログインして開くと、権限許可済み�
 
 Webの「身体データを更新」または上部の「更新」は保存済みデータを再取得します。Android端末への同期指示ではありません。アプリの同期成功後に押してください。取得中・Firestore読み取り失敗・データなしを区別し、nullや未保存項目は「データなし」、0は0として表示します。権限エラー時は管理者アカウントとルールの公開状況を確認するメッセージを表示します。ただし既存の歩数取得では記録なしも0になります。心拍数は日次の算術平均、睡眠は当日終了した睡眠セッションの合計です。
 
-利用前に `challenge_atom` の `feature/watch-get` で更新したFirestoreルールを公開してください。`health_daily` は本人と `admin: true` の管理者が読み取り可能、書き込みは本人のみです。他のコレクションの権限は変更しません。ルール未公開ではWebに権限エラーが表示されます。管理者claimを付けた直後はログインし直してトークンを更新してください。ローカルWebでは再読み込み、公開Webではこのリポジトリの `watch` のHosting更新も必要です。
+利用前に `challenge_atom` の `feature/watch-get` で更新したFirestoreルールを公開してください。`health_daily` は本人と `admin: true` の管理者が読み取り可能、書き込みは本人のみです。他のコレクションの権限は変更しません。ルール未公開ではWebに権限エラーが表示されます。管理者claimを付けた直後はログインし直してトークンを更新してください。Web画面は最新コードを取得し、`npm start` で起動してブラウザを再読み込みします。通常のローカル運用では、Firebase Hostingへのデプロイやプレビューチャンネルの発行は不要です。
+
+Firestoreルールが未反映の場合のみ、管理者が `challenge_atom` のルートで次を実行します。これはクラウド側の共有ルールの更新であり、Web画面の公開とは別の操作です。公開済みなら、Webの変更のたびに実行する必要はありません。
 
 ```sh
-# challenge_atom のルートで実行（公開操作）
+# challenge_atom のルートで管理者が実行
 firebase deploy --only firestore:rules --project challenge-atom-1c763
-# atom_web のルートで実行（公開操作）
-npm run deploy
 ```
 
 mainとの統合後、Windows / Node.js 24.19.0でビルド・全38テスト・JavaScript構文チェックが成功しました。身体情報の直接読み取り、興味関心の一覧・四象限表示、状態グラフの共通操作、認証とユーザー切り替え時の応答破棄を確認しています。Firebase SDKとDOMはモックです。本番Firebaseでの表示確認とルール・Hostingの公開は今回実施していません。アプリの同期対象はAndroidで、iOSは対象外です。
@@ -87,7 +87,7 @@ Functionsの変更を伴う場合は、管理者が`challenge_atom`で上記3つ
 
 旧キーワード推定と`context-v1`の4軸、および`context-v2`の各軸は、0〜1から`2 * 値 - 1`で換算し、最も近い0.25刻みに丸めます（`context-v2`の`valence`は元から符号付きのため換算しません）。`context-v3` / `context-v4`は元の符号付き値を表示します。未推定の初期値0は中程度と区別し、値も点も表示しません。旧記録にない追加軸も未推定です。換算は表示時だけで、保存データや推定APIは変更しません。現在の推定APIが4軸を保存している場合、追加4軸はV2形式の記録が保存されるまで未推定になります。
 
-Firebase設定はHostingの`/__/firebase/init.json`から取得します。SDKはFirebase公式CDNの12.0.0です。[Firebase公式の説明](https://firebase.google.com/docs/hosting/reserved-urls)
+Firebase設定はHostingエミュレーターの `/__/firebase/init.json` から取得するため、`npm start` で起動してください。HTMLファイルの直接表示やLive Serverでの起動には対応していません。画面はローカルで配信しますが、認証・Firestore・取得APIはクラウドのFirebaseに接続します。Firebase SDKも公式CDNから読み込むため、インターネット接続が必要です。
 
 ## 開発・検証
 
