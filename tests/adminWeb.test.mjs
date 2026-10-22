@@ -4,7 +4,7 @@ import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 const trendSource = (await readFile(new URL('../admin-web/state-trend.js',import.meta.url),'utf8')).replace(/^export /gm,'');
 const interestSource = (await readFile(new URL('../admin-web/interest-registry.js',import.meta.url),'utf8')).replace(/^export /gm,'');
-const source = trendSource + '\n' + interestSource + '\n' + (await readFile(new URL('../admin-web/app.js',import.meta.url),'utf8')).replace(/^import .*;\n/gm,'');
+const source = trendSource + '\n' + interestSource + '\n' + (await readFile(new URL('../admin-web/app.js',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'');
 class Element {
   hidden = false; disabled = false; value = ''; textContent = ''; children = []; attributes = {}; listeners = {};
   style = {setProperty(){}}; classList = {toggle(){}};
@@ -22,7 +22,7 @@ class Element {
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
 async function setup(admin = true) {
-  const nodes = new Map(), requests = [];
+  const nodes = new Map(), requests = [], healthRequests = [];
   const el = id => {if (!nodes.has(id)) nodes.set(id,new Element());return nodes.get(id);};
   el('results').hidden = true; el('viewer').hidden = true;
   let tokenListener;
@@ -31,20 +31,30 @@ async function setup(admin = true) {
     document:{getElementById:el,createElement:tag => Object.assign(new Element(), {tagName:tag}),createElementNS:(_ns,tag) => Object.assign(new Element(), {tagName:tag})},Date,Number,String,
     fetch:async () => ({ok:true,json:async () => ({projectId:'test',apiKey:'test'})}),
     initializeApp:() => ({}),getAuth:() => ({}),setPersistence:async () => {},browserSessionPersistence:{},
-    getFunctions:() => ({}),httpsCallable:(_functions,name) => data => new Promise((resolve,reject) => requests.push({name,data,resolve,reject})),
+    getFunctions:() => ({}),httpsCallable:(_functions,name) => {
+      assert.equal(name,'adminConversationViewer');
+      return data => new Promise((resolve,reject) => requests.push({name,data,resolve,reject}));
+    },
+    getFirestore:()=>({}),collection:(_db,...parts)=>({path:parts.join('/')}),
+    where:(field,operator,value)=>({kind:'where',field,operator,value}),
+    orderBy:(field,direction)=>({kind:'orderBy',field,direction}),limit:value=>({kind:'limit',value}),
+    query:(target,...constraints)=>({target,constraints}),
+    getDocsFromServer:query=>new Promise((resolve,reject)=>healthRequests.push({query,resolve,reject})),
     signInWithEmailAndPassword:async () => {},signOut:async () => tokenListener(null),
     onIdTokenChanged:(_auth,fn) => {tokenListener=fn;fn({uid:'admin-a',getIdTokenResult:async () => ({claims:{admin}})});},
   };
   vm.runInNewContext(source,context); await tick();
-  return {el,requests,context,tokenListener,submit:() => el('search-form').listeners.submit({preventDefault(){}})};
+  return {el,requests,healthRequests,context,tokenListener,submit:() => el('search-form').listeners.submit({preventDefault(){}})};
 }
 const sample = uid => ({uid,loginId:uid,date:'2026-10-13',conversationId:'c1',conversations:[{id:'c1',title:'会話',messageCount:2}],
   memories:[{content:'<img src=x onerror=alert(1)>'}],interestKeywords:[],emotionState:{positive_affect:.7,anxiety:null},physicalSignals:null});
+const healthSnapshot = (id,data) => ({docs:id ? [{id,data:()=>data}] : []});
 
 test('non-admin browser session cannot request data',async () => {
-  const {el,requests,submit} = await setup(false);
+  const {el,requests,healthRequests,submit} = await setup(false);
   assert.equal(el('viewer').hidden,true); assert.match(el('status').textContent,/管理者権限がありません/);
   el('target-login-id').value='target';submit();assert.equal(requests.length,0);
+  assert.equal(healthRequests.length,0);
 });
 test('user switch discards a stale response and renders stored text without HTML injection',async () => {
   const {el,requests,submit} = await setup();
@@ -127,6 +137,105 @@ test('V2 history renders seven signed charts and omits unestimated zero markers'
   assert.equal(nodes.filter(node=>node.attributes.y1==='90' && node.attributes['stroke-width']==='2').length,7);
 });
 const loggedIn = (uid = 'admin-a', admin = true) => ({uid,getIdTokenResult:async () => ({claims:{admin}})});
+
+test('health data reads Firestore by resolved UID and preserves zero, missing fields, date and Timestamp',async()=>{
+  const {el,requests,healthRequests,submit}=await setup();
+  el('target-login-id').value='target';submit();
+  requests[0].resolve({data:sample('target')});await tick();
+  assert.equal(healthRequests[0].query.target.path,'users/target/health_daily');
+  const constraints=Array.from(healthRequests[0].query.constraints,item=>({...item}));
+  const today=new Intl.DateTimeFormat('en-CA',{
+    timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit',
+  }).format(new Date());
+  const tomorrow=new Date(`${today}T00:00:00+09:00`);
+  tomorrow.setUTCDate(tomorrow.getUTCDate()+1);
+  assert.deepEqual(constraints,[
+    {kind:'where',field:'date',operator:'<',value:tomorrow},
+    {kind:'orderBy',field:'date',direction:'desc'}, {kind:'limit',value:1},
+  ]);
+  assert.equal(el('physical').attributes['aria-busy'],'true');
+  healthRequests[0].resolve(healthSnapshot('2000-01-01',{
+    steps:0,sleepMinutes:0,heartRate:80.5,restingHeartRate:null,
+    updatedAt:{toDate:()=>new Date('2000-01-01T01:00:00Z')},
+  }));await tick();
+  const rows=el('physical').children.map(node=>node.children.map(child=>child.textContent));
+  assert.deepEqual(rows,[['歩数','0歩'],['睡眠時間','0時間0分'],['通常心拍数（当日平均）','80.5 bpm'],['安静時心拍数（当日平均）','データなし']]);
+  assert.match(el('physical-note').textContent,/2000-01-01.*過去の保存データ/);
+  assert.match(el('physical-note').textContent,/最終同期成功/);
+  assert.ok(el('physical-note').textContent.includes(new Date('2000-01-01T01:00:00Z').toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'})));
+  assert.match(el('physical-note').textContent,/今日のデータはまだ同期/);
+  assert.equal(el('physical-refresh').disabled,false);
+  el('physical-refresh').listeners.click();
+  assert.equal(healthRequests.length,2);
+  healthRequests[1].resolve(healthSnapshot(null));await tick();
+  assert.equal(el('physical').children[0].children[1].textContent,'データなし');
+  assert.match(el('physical-note').textContent,/同期済みの身体データはありません/);
+});
+
+test('health responses cannot leak across user changes or logout',async()=>{
+  const {el,requests,healthRequests,submit,tokenListener}=await setup();
+  const response=()=>healthSnapshot('2026-10-21',{steps:123});
+  el('target-login-id').value='user-a';submit();
+  requests[0].resolve({data:sample('user-a')});await tick();
+  el('target-login-id').value='user-b';el('target-login-id').listeners.input();submit();
+  requests[1].resolve({data:sample('user-b')});await tick();
+  healthRequests[0].resolve(response());await tick();
+  assert.ok(!el('physical').children.some(row=>row.children[1].textContent==='123歩'));
+  await tokenListener(null);
+  healthRequests[1].resolve(response());await tick();
+  assert.equal(el('physical').children.length,0);
+  assert.equal(el('physical-note').textContent,'');
+});
+
+test('Firestore read failure leaves conversation data usable and exposes retry',async()=>{
+  const {el,requests,healthRequests,submit}=await setup();
+  el('target-login-id').value='target';submit();
+  requests[0].resolve({data:sample('target')});await tick();
+  healthRequests[0].reject({code:'unavailable'});await tick();
+  assert.equal(el('results').hidden,false);
+  assert.equal(el('memories').children.length,1);
+  assert.match(el('physical-note').textContent,/取得できませんでした/);
+  assert.equal(el('physical-refresh').disabled,false);
+  assert.equal(el('physical').attributes['aria-busy'],'false');
+});
+
+test('health reads use the Firebase UID instead of the login ID',async()=>{
+  const {el,requests,healthRequests,submit}=await setup();
+  el('target-login-id').value='target';submit();
+  requests[0].resolve({data:{...sample('resolved-uid'),loginId:'target'}});await tick();
+  assert.equal(healthRequests[0].query.target.path,'users/resolved-uid/health_daily');
+  healthRequests[0].resolve(healthSnapshot('2000-01-01',{heartRate:75}));await tick();
+  assert.equal(el('physical').children[0].children[1].textContent,'データなし');
+  assert.equal(el('physical').children[2].children[1].textContent,'75 bpm');
+});
+
+test('Firestore permission failures explain rules publishing and retry can recover',async()=>{
+  const {el,requests,healthRequests,submit}=await setup();
+  el('target-login-id').value='target';submit();
+  requests[0].resolve({data:sample('target')});await tick();
+  healthRequests[0].reject({code:'permission-denied'});await tick();
+  assert.match(el('physical-note').textContent,/読み取り権限がありません/);
+  assert.match(el('physical-note').textContent,/Firestoreルールの公開状況/);
+  el('physical-refresh').listeners.click();
+  const today=new Intl.DateTimeFormat('en-CA',{
+    timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit',
+  }).format(new Date());
+  healthRequests[1].resolve(healthSnapshot(today,{steps:1234}));await tick();
+  assert.equal(el('physical').children[0].children[1].textContent,'1,234歩');
+  assert.match(el('physical-note').textContent,/（今日）/);
+  assert.ok(!el('physical-note').textContent.includes('読み取り権限がありません'));
+});
+
+test('revoking admin rights discards an outstanding Firestore result',async()=>{
+  const {el,requests,healthRequests,submit,tokenListener}=await setup();
+  el('target-login-id').value='target';submit();
+  requests[0].resolve({data:sample('target')});await tick();
+  await tokenListener({uid:'admin-a',getIdTokenResult:async()=>({claims:{admin:false}})});
+  healthRequests[0].resolve(healthSnapshot('2000-01-01',{steps:999}));await tick();
+  assert.equal(el('results').hidden,true);
+  assert.equal(el('physical').children.length,0);
+});
+
 test('all axes share chronology, selection and window even with missing estimates',async()=>{
   const {el,requests,submit}=await setup();
   const keys=['positive_affect','interest','anxiety','loneliness','valence','arousal','energy','motivation'];

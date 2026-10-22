@@ -55,7 +55,14 @@
               <div id="state-trend"></div>
               <div class="trend-charts interest-state-section"><section class="trend-chart" aria-labelledby="interest-state-heading"><div class="section-heading"><h3 id="interest-state-heading">興味・関心</h3><span>現在の推定値</span></div><p class="axis-description">横軸を切り替えて、話題ごとの関心と活動を確認できます。</p><div id="interest-chart"></div></section></div>
             </div>
-            <aside class="card physical-card"><h2>今日の身体データ</h2><div id="physical" class="metrics"></div><p id="physical-note" class="muted small"></p></aside>
+            <aside class="card physical-card">
+              <h2>身体データ</h2>
+              <div id="physical" class="metrics" aria-busy="false"></div>
+              <p id="physical-note" class="muted small" role="status" aria-live="polite"></p>
+              <button id="physical-refresh" class="secondary" disabled>身体データを更新</button>
+              <p class="muted small physical-help">Androidアプリを開くと同期します。初回はアプリでHealth Connectとの連携を許可してください。同期後にこの画面の「身体データを更新」を押してください。</p>
+              <p class="muted small physical-help">表示するのは最終同期時点の保存データです。アプリで自動同期を設定しても、実行が遅れる場合があります。睡眠時間は睡眠セッションの合計です。歩数は記録がない場合も0歩になることがあります。</p>
+            </aside>
           </div>
         </section>
         <section id="memory-panel" role="tabpanel" aria-labelledby="memory-tab" hidden>
