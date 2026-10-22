@@ -1,10 +1,11 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js';
 import { getAuth, setPersistence, browserSessionPersistence, signInWithEmailAndPassword, signOut, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-auth.js';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-functions.js';
+import { getFirestore, collection, query, where, orderBy, limit, getDocsFromServer } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js';
 import { renderStateTrend, closeStateTrendPopup } from './state-trend.js';
 
 const $ = id => document.getElementById(id);
-let auth, load, authorized = false, revision = 0, selectedLoginId = '', selectedConversation = null;
+let auth, db, load, authorized = false, revision = 0, selectedLoginId = '', selectedConversation = null;
 let verifiedAdminUid = null, authRevision = 0;
 const date = value => {
   if (!value) return '—';
@@ -16,6 +17,9 @@ function resetData() {
   closeStateTrendPopup($('state-trend'));
   revision++; selectedLoginId = ''; selectedConversation = null;
   $('results').hidden = true;
+  $('physical-note').textContent = '';
+  $('physical-refresh').disabled = true;
+  $('physical').setAttribute('aria-busy','false');
   for (const id of ['metrics','physical','keywords','memories','conversation','state-trend']) $(id).replaceChildren();
   for (const id of ['target-id','target-name','target-uid']) $(id).textContent = '';
   $('user-details').open = false;
@@ -60,9 +64,7 @@ function render(data) {
   $('conversation-note').textContent = data.limits?.conversations ? (sessions.length > 30 ? '最新30件と選択中の会話を表示' : '最新30件を表示') : '';
   $('conversation-note').hidden = !data.limits?.conversations;
   renderStateTrend($('state-trend'), data.emotionHistory, data.limits?.emotionHistory === true);
-  const physical = data.physicalSignals ?? {};
-  metrics('physical',[['歩数',physical.steps,'歩'],['睡眠時間',physical.sleepMinutes == null ? null : (physical.sleepMinutes / 60).toFixed(1),'時間'],['安静時心拍数',physical.restingHeartRate,'bpm']]);
-  $('physical-note').textContent = data.physicalSignals ? `更新: ${date(physical.recordedAt)}` : '記録がありません。';
+  renderPhysical(null);
   $('keywords').replaceChildren(...(data.interestKeywords?.length ? data.interestKeywords.map(k => element('span',k.keyword,'chip')) : [element('p','登録がありません。','muted')]));
   const memories = data.memories ?? [];
   $('memory-count').textContent = `${memories.length}件`;
@@ -74,6 +76,69 @@ function render(data) {
   $('memory-note').textContent = data.limits?.memories ? '300件を表示' : '';
   $('memory-note').hidden = !data.limits?.memories;
   $('results').hidden = false;
+}
+function renderPhysical(data) {
+  const physical = data?.physicalSignals;
+  const value = (number, unit) => typeof number === 'number' && Number.isFinite(number) && number >= 0
+    ? `${number.toLocaleString('ja-JP', {maximumFractionDigits:1})}${unit}` : 'データなし';
+  const sleep = physical?.sleepMinutes;
+  const rows = [
+    ['歩数',value(physical?.steps,'歩')],
+    ['睡眠時間',typeof sleep === 'number' && Number.isFinite(sleep) && sleep >= 0
+      ? `${Math.floor(sleep / 60)}時間${Math.floor(sleep % 60)}分` : 'データなし'],
+    ['通常心拍数（当日平均）',value(physical?.heartRate,' bpm')],
+    ['安静時心拍数（当日平均）',value(physical?.restingHeartRate,' bpm')],
+  ];
+  $('physical').replaceChildren(...rows.map(([label,text])=>{
+    const node=element('div',null,'metric');
+    node.append(element('small',label),element('strong',text));return node;
+  }));
+  $('physical-note').textContent = physical
+    ? `対象日: ${physical.date ?? '不明'}（${physical.date === data.today ? '今日' : '過去の保存データ'}）\n最終同期成功: ${date(physical.recordedAt)}${physical.date === data.today ? '' : '\n今日のデータはまだ同期されていません。'}`
+    : '同期済みの身体データはありません。';
+}
+async function fetchPhysicalData(loginId, current = revision) {
+  const uid = $('target-uid').textContent;
+  if (!authorized || !loginId || !uid) return;
+  $('physical-refresh').disabled = true;
+  $('physical').setAttribute('aria-busy','true');
+  $('physical-note').textContent = '保存済みの身体データを読み込み中…';
+  try {
+    const today = new Intl.DateTimeFormat('en-CA', {
+      timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit',
+    }).format(new Date());
+    const tomorrow = new Date(`${today}T00:00:00+09:00`);
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+    // 検索で解決済みのUIDを使用し、キャッシュではなくサーバーから最新1日分を取得する。
+    const snapshot = await getDocsFromServer(query(
+      collection(db,'users',uid,'health_daily'),
+      where('date','<',tomorrow), orderBy('date','desc'), limit(1),
+    ));
+    if (current !== revision || !authorized || uid !== $('target-uid').textContent) return;
+    const latest = snapshot.docs[0];
+    const data = latest?.data();
+    const recordedAt = data?.updatedAt?.toDate?.();
+    renderPhysical({today, physicalSignals: latest ? {
+      date:latest.id, steps:data.steps, sleepMinutes:data.sleepMinutes,
+      heartRate:data.heartRate, restingHeartRate:data.restingHeartRate,
+      recordedAt:recordedAt instanceof Date && Number.isFinite(recordedAt.getTime())
+        ? recordedAt.toISOString() : null,
+    } : null});
+  } catch(error) {
+    if (current !== revision || !authorized) return;
+    renderPhysical(null);
+    const code = error?.code?.replace(/^firestore\//,'');
+    $('physical-note').textContent = code === 'permission-denied'
+      ? '身体データの読み取り権限がありません。管理者アカウントとFirestoreルールの公開状況を確認してください。'
+      : code === 'unauthenticated'
+        ? 'ログインし直して身体データを再取得してください。'
+        : '身体データを取得できませんでした。通信状態を確認して再取得してください。';
+  } finally {
+    if (current === revision && authorized) {
+      $('physical-refresh').disabled = false;
+      $('physical').setAttribute('aria-busy','false');
+    }
+  }
 }
 function busy(value) {
   for (const id of ['search-button','refresh','conversation']) $(id).disabled = value;
@@ -106,6 +171,7 @@ async function fetchData(loginId, conversationId) {
     if (current !== revision || !authorized) return;
     selectedLoginId = result.data.loginId ?? loginId; selectedConversation = result.data.conversationId;
     render(result.data); status();
+    void fetchPhysicalData(selectedLoginId,current);
   } catch (error) { if (current === revision) status(errorMessage(error),true); }
   finally { if (current === revision) { busy(false); $('conversation').disabled = !$('conversation').value; } }
 }
@@ -124,6 +190,7 @@ $('logout').addEventListener('click', async () => {
 $('search-form').addEventListener('submit',event => { event.preventDefault(); fetchData($('target-login-id').value.trim(),null); });
 $('target-login-id').addEventListener('input',() => { resetData(); busy(false); status(); });
 $('refresh').addEventListener('click',() => fetchData(selectedLoginId,selectedConversation));
+$('physical-refresh').addEventListener('click',() => fetchPhysicalData(selectedLoginId));
 $('conversation').addEventListener('change',event => fetchData(selectedLoginId,event.target.value));
 function tab(name) {
   closeStateTrendPopup($('state-trend'));
@@ -142,6 +209,7 @@ async function initialize() {
     const config = await response.json();
     if (!config.projectId || !config.apiKey) throw new Error('configuration');
     const app = initializeApp(config);
+    db = getFirestore(app);
     auth = getAuth(app); await setPersistence(auth,browserSessionPersistence);
     load = httpsCallable(getFunctions(app,'asia-northeast1'),'adminConversationViewer');
     onIdTokenChanged(auth, async user => {
