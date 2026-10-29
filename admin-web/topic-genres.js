@@ -53,41 +53,46 @@ export function groupByTopicGenre(items, textOf, contextOf = () => '') {
 export function createGenreEditor(item, genre, editing) {
   const label = document.createElement('details');
   label.className = 'genre-editor';
-  if (!editing?.save || !editing.keyOf(item)) {
+  if ((!editing?.save && !editing?.change) || !editing.keyOf(item)) {
     label.hidden = true;
     return label;
   }
   const toggle = document.createElement('summary');
   toggle.textContent = '⚙';
   toggle.title = '項目を編集';
-  toggle.setAttribute('aria-label', `${item.keyword ?? item.content ?? '項目'}のジャンルを変更`);
+  const availableActions = editing.save ? editing.change ? 'ジャンルを変更・訂正・削除' : 'ジャンルを変更' : '訂正・削除';
+  toggle.setAttribute('aria-label', `${item.keyword ?? item.content ?? '項目'}の${availableActions}`);
   label.append(toggle);
-  const select = document.createElement('select');
-  select.setAttribute('aria-label', `${item.keyword ?? item.content ?? '項目'}のジャンル`);
-  for (const entry of [{id:'',label:'自動分類に戻す'}, ...topicGenres]) {
-    const option = document.createElement('option');
-    option.value = entry.id; option.textContent = entry.label;
-    select.append(option);
-  }
-  select.value = item.topicGenre ?? '';
   const feedback = document.createElement('span');
   feedback.setAttribute('role','status');
   feedback.className = 'genre-save-status';
   label.addEventListener('keydown', event => {
     if (event.key === 'Escape') { label.open = false; toggle.focus(); }
   });
-  select.addEventListener('change', async () => {
-    const value = select.value || null;
-    select.disabled = true; feedback.textContent = '保存中…';
-    try {
-      await editing.save(editing.kind, editing.keyOf(item), value);
-      feedback.textContent = '保存しました。';
-    } catch {
-      select.value = item.topicGenre ?? '';
-      feedback.textContent = '保存できませんでした。もう一度変更してください。';
-    } finally { select.disabled = false; }
-  });
-  label.append(select, feedback);
+  let select = null;
+  if (editing.save) {
+    select = document.createElement('select');
+    select.setAttribute('aria-label', `${item.keyword ?? item.content ?? '項目'}のジャンル`);
+    for (const entry of [{id:'',label:'自動分類に戻す'}, ...topicGenres]) {
+      const option = document.createElement('option');
+      option.value = entry.id; option.textContent = entry.label;
+      select.append(option);
+    }
+    select.value = item.topicGenre ?? '';
+    select.addEventListener('change', async () => {
+      const value = select.value || null;
+      select.disabled = true; feedback.textContent = '保存中…';
+      try {
+        await editing.save(editing.kind, editing.keyOf(item), value);
+        feedback.textContent = '保存しました。';
+      } catch {
+        select.value = item.topicGenre ?? '';
+        feedback.textContent = '保存できませんでした。もう一度変更してください。';
+      } finally { select.disabled = false; }
+    });
+    label.append(select);
+  }
+  label.append(feedback);
   if (editing.change) {
     const actions = document.createElement('div');
     actions.className = 'record-actions';
@@ -104,12 +109,12 @@ export function createGenreEditor(item, genre, editing) {
     const cancel = document.createElement('button');
     cancel.type = 'button'; cancel.className = 'secondary'; cancel.textContent = 'キャンセル';
     let action = null;
-    const close = () => {panel.hidden = true;actions.hidden = false;select.disabled = false;feedback.textContent = '';};
+    const close = () => {panel.hidden = true;actions.hidden = false;if (select) select.disabled = false;feedback.textContent = '';};
     for (const [value,text] of [['editRecord','訂正'],['deleteRecord','削除']]) {
       const button = document.createElement('button');
       button.type = 'button'; button.className = value === 'deleteRecord' ? 'record-delete secondary' : 'secondary'; button.textContent = text;
       button.addEventListener('click', () => {
-        action = value;actions.hidden = true;panel.hidden = false;select.disabled = true;feedback.textContent = '';
+        action = value;actions.hidden = true;panel.hidden = false;if (select) select.disabled = true;feedback.textContent = '';
         input.value = item.content ?? item.keyword ?? '';
         input.hidden = value !== 'editRecord';question.hidden = value !== 'deleteRecord';
         confirm.textContent = value === 'editRecord' ? '保存' : '削除する';

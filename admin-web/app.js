@@ -3,8 +3,8 @@ import { getAuth, setPersistence, browserSessionPersistence, signInWithEmailAndP
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-functions.js';
 import { getFirestore, collection, query, where, orderBy, limit, getDocsFromServer } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js';
 import { renderStateTrend, closeStateTrendPopup } from './state-trend.js';
-import { renderInterestRegistry, renderInterestChart } from './interest-registry.js?v=20261028-records';
-import { renderMemoryList, fitMemoryList, fitInterestList } from './memory-list.js?v=20261028-records';
+import { renderInterestRegistry, renderInterestChart } from './interest-registry.js?v=20261029-capabilities';
+import { renderMemoryList, fitMemoryList, fitInterestList } from './memory-list.js?v=20261029-capabilities';
 
 const $ = id => document.getElementById(id);
 let auth, db, load, authorized = false, revision = 0, selectedLoginId = '', selectedConversation = null;

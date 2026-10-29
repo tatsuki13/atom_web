@@ -53,11 +53,12 @@ const sample = uid => ({uid,loginId:uid,date:'2026-10-13',conversationId:'c1',co
 const healthSnapshot = (id,data) => ({docs:id ? [{id,data:()=>data}] : []});
 const descendants = node => [node,...node.children.flatMap(descendants)];
 
-test('gear corrections and confirmed deletion call the admin API then refresh the list',async()=>{
+test('record editing alone allows gear corrections, cancellation and confirmed deletion',async()=>{
   const {el,requests,submit}=await setup();
-  const data={...sample('target'),capabilities:{topicGenreEditing:true,recordEditing:true},memories:[{id:'m',content:'料理が好き'}],interestKeywords:[]};
+  const data={...sample('target'),capabilities:{recordEditing:true},memories:[{id:'m',content:'料理が好き'}],interestKeywords:[]};
   el('target-login-id').value='target';submit();requests[0].resolve({data});await tick();
   const find=(tag,text)=>descendants(el('memories')).find(node=>node.tagName===tag && (text===undefined || node.textContent===text));
+  assert.equal(find('select'),undefined,'genre changes are not offered when unsupported');
   find('button','訂正').listeners.click();
   const input=find('textarea');assert.equal(input.value,'料理が好き');input.value='園芸が好き';
   const save=find('button','保存');const edited=save.listeners.click();
@@ -71,6 +72,23 @@ test('gear corrections and confirmed deletion call the admin API then refresh th
   requests[3].resolve({data:{saved:true,uid:'target',action:'deleteRecord',key:'new'}});await tick();
   requests[4].resolve({data:{...data,memories:[]}});await deleted;
   assert.ok(descendants(el('memories')).some(node=>node.textContent==='記憶がありません。'));
+});
+
+test('genre and record capabilities independently control all shared gear menus',async()=>{
+  for (const capabilities of [{},{topicGenreEditing:false,recordEditing:true},{topicGenreEditing:true,recordEditing:false},{topicGenreEditing:true,recordEditing:true}]) {
+    const {el,requests,submit}=await setup();
+    el('target-login-id').value='target';submit();
+    requests[0].resolve({data:{...sample('target'),capabilities,memories:[{id:'m',content:'料理が好き'}],interestKeywords:[{keyword:'料理',normalizedKey:'料理',interestScore:.8,activityStatus:'active'}]}});await tick();
+    const keyword=descendants(el('interest-chart')).find(node=>node.attributes['data-interest-keyword']==='0');
+    keyword.listeners.click();
+    for (const target of ['memories','keywords','interest-chart']) {
+      const menu=descendants(el(target)).find(node=>node.className==='genre-editor');
+      assert.equal(menu.hidden,!(capabilities.topicGenreEditing || capabilities.recordEditing),target);
+      assert.equal(descendants(menu).some(node=>node.tagName==='select'),capabilities.topicGenreEditing===true,target);
+      assert.equal(descendants(menu).some(node=>node.className==='record-actions'),capabilities.recordEditing===true,target);
+    }
+    assert.equal(requests.length,1,'rendering capability combinations must not perform writes');
+  }
 });
 
 test('one sort control orders interests and memories together and works with interests alone',async () => {
