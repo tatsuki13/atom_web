@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ATOM | ユーザー情報</title>
-  <link rel="stylesheet" href="styles.css">
-  <script type="module" src="app.js"></script>
+  <link rel="stylesheet" href="styles.css?v=20261028-records">
+  <script type="module" src="app.js?v=20261028-records"></script>
 </head>
 <body>
   <header class="app-header">
@@ -44,9 +44,19 @@
           <div class="update-controls"><span id="fetched-at" class="muted small"></span><button id="refresh" class="secondary">更新</button></div>
         </div>
         <div class="daily-summary"><p class="summary-label">今日の会話</p><div id="metrics" class="metrics"></div></div>
-        <div class="tabs" role="tablist" aria-label="表示内容">
-          <button id="state-tab" role="tab" aria-selected="true" aria-controls="state-panel">状態</button>
-          <button id="memory-tab" role="tab" aria-selected="false" aria-controls="memory-panel" tabindex="-1">記憶</button>
+        <div class="view-controls">
+          <div class="tabs" role="tablist" aria-label="表示内容">
+            <button id="state-tab" role="tab" aria-selected="true" aria-controls="state-panel">状態</button>
+            <button id="memory-tab" role="tab" aria-selected="false" aria-controls="memory-panel" tabindex="-1">記憶</button>
+          </div>
+          <div id="memory-sort-control" hidden>
+            <select id="memory-sort" aria-label="興味・関心と記憶の並び順" disabled>
+              <option value="category">ジャンル順</option>
+              <option value="newest">新しい順</option>
+              <option value="oldest">古い順</option>
+              <option value="frequency">頻出順</option>
+            </select>
+          </div>
         </div>
         <section id="state-panel" role="tabpanel" aria-labelledby="state-tab">
           <div class="state-layout">
@@ -67,8 +77,13 @@
         </section>
         <section id="memory-panel" role="tabpanel" aria-labelledby="memory-tab" hidden>
           <div class="memory-layout">
-            <aside class="card interest-card"><h2>興味・関心</h2><div id="keywords"></div></aside>
-            <div class="card memories-card"><div class="section-heading"><h2>記憶</h2><span id="memory-count" class="badge"></span></div><div id="memories"></div><p id="memory-note" class="muted small" hidden></p></div>
+            <aside class="card interest-card"><h2 id="interest-heading">興味・関心</h2><div id="keywords" role="region" aria-labelledby="interest-heading" tabindex="-1"></div></aside>
+            <div class="card memories-card">
+              <div class="section-heading"><h2 id="memory-heading">記憶</h2><span id="memory-count" class="badge" aria-live="polite"></span></div>
+              <p id="memory-scroll-hint" class="sr-only" hidden>10件目以降は一覧をスクロールして確認できます。</p>
+              <div id="memories" class="memories-list" role="region" aria-labelledby="memory-heading" aria-describedby="memory-scroll-hint" tabindex="-1"></div>
+              <p id="memory-note" class="muted small" hidden></p>
+            </div>
           </div>
         </section>
       </div>

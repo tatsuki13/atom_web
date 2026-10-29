@@ -1,3 +1,6 @@
+import {groupByTopicGenre, resolveTopicGenre, createGenreEditor} from './topic-genres.js?v=20261028-records';
+import {sortMemories} from './memory-list.js?v=20261028-records';
+
 const node = (tag, text, className) => {
   const result = document.createElement(tag);
   if (text != null) result.textContent = text;
@@ -28,7 +31,7 @@ const preferenceLabel = item => item.explicitPolarity === 'negative' ? '興味�
   : !valid(item.interestScore, 1) ? '興味の方向が未推定'
   : item.interestScore > .5 ? '興味ありの傾向' : item.interestScore < .5 ? '興味なしの傾向' : '中立・判断材料が少ない';
 
-export function renderInterestChart(container, items) {
+export function renderInterestChart(container, items, editing, memories = []) {
   container.replaceChildren();
   const topics = Array.isArray(items) ? items : [];
   let axis = 'activity', selected = null;
@@ -121,19 +124,24 @@ export function renderInterestChart(container, items) {
     if (topics.length) {
       list.append(node('p', `すべての話題 ${topics.length}件${unknown ? ` ／ 位置が未判定 ${unknown}件` : ''}。重なった点や未判定の話題も、一覧から選べます。`, 'muted small'));
       const keywords = node('div',null,'interest-keyword-buttons');
-      topics.forEach((item,index)=>{
-        const position = interestChartPosition(item,axis);
-        const reason = position.y === null ? '興味の方向が未推定' : position.x === null ? `${activity ? '活動状況' : '自発性'}が未判定` : '';
-        const button = node('button',`${item.keyword}${item.confirmationState === 'inferred' ? '・推定中' : ''}${reason ? `（${reason}）` : ''}`,'secondary');
-        button.setAttribute('type','button');button.setAttribute('aria-pressed',String(index === selected));button.setAttribute('data-interest-keyword',String(index));
-        if (index === selected) focusedKeyword = button;
-        button.addEventListener('click',()=>select(index,'list'));keywords.append(button);
-      });
+      for (const {genre,items:groupItems} of groupByTopicGenre(topics,item=>item.keyword,item=>interestGenreContext(item,memories))) {
+        keywords.append(node('h4',`${genre.label} · ${groupItems.length}件`,'interest-genre-heading'));
+        groupItems.forEach(item=>{
+          const index = topics.indexOf(item);
+          const position = interestChartPosition(item,axis);
+          const reason = position.y === null ? '興味の方向が未推定' : position.x === null ? `${activity ? '活動状況' : '自発性'}が未判定` : '';
+          const button = node('button',`${item.keyword}${item.confirmationState === 'inferred' ? '・推定中' : ''}${reason ? `（${reason}）` : ''}`,'secondary');
+          button.setAttribute('type','button');button.setAttribute('aria-pressed',String(index === selected));button.setAttribute('data-interest-keyword',String(index));
+          if (index === selected) focusedKeyword = button;
+          button.addEventListener('click',()=>select(index,'list'));keywords.append(button);
+        });
+      }
       list.append(keywords);
     }
     if (selected !== null && topics[selected]) {
       const item = topics[selected];
       detail.append(node('h3',item.keyword));
+      detail.append(createGenreEditor(item,resolveTopicGenre(item,item.keyword,interestGenreContext(item,memories)),editing));
       detail.append(node('p',`${preferenceLabel(item)}${item.confirmationState === 'inferred' ? '・推定中' : ''}`));
       detail.append(node('p',`活動状況：${activityLabel(item) || '未判定'}。休止中は興味なしという意味ではありません。`,'muted small'));
       detail.append(node('p',`本人の自発性：${valid(item.spontaneityScore,1) ? `自分から話した割合 ${Math.round(item.spontaneityScore*100)}%（観測日ベース）` : '未判定'}`,'muted small'));
@@ -148,43 +156,74 @@ export function renderInterestChart(container, items) {
   draw();
 }
 
-export function renderInterestRegistry(container, items, memories = []) {
+function interestGenreContext(item, memories) {
+  return [
+    ...(Array.isArray(item.details) ? item.details.map(detail => typeof detail?.content === 'string' ? detail.content : '') : []),
+    ...memories.filter(memory => Array.isArray(item.sourceMemoryIds) && item.sourceMemoryIds.includes(memory.id)).map(memory => memory.content ?? ''),
+  ].join(' ');
+}
+
+export function sortInterestItems(items, memories = [], order = 'category') {
+  const validTime = value => typeof value === 'string' && Number.isFinite(Date.parse(value));
+  return sortMemories(items.map(item => {
+    const ids = [...new Set(Array.isArray(item.sourceMemoryIds) ? item.sourceMemoryIds : [])];
+    const linked = ids.map(id => memories.find(memory => memory.id === id));
+    const dates = linked.filter(Boolean).flatMap(memory => [memory.updatedAt,memory.createdAt]).filter(validTime);
+    const createdAt = validTime(item.lastObservedAt) ? item.lastObservedAt
+      : dates.sort((a,b) => Date.parse(b)-Date.parse(a))[0] ?? null;
+    const knownCount = value => Number.isSafeInteger(value) && value >= 1;
+    const confirmationCount = knownCount(item.confirmationCount) ? item.confirmationCount
+      : linked.length && linked.every(memory => memory && knownCount(memory.confirmationCount))
+        ? linked.reduce((sum,memory) => sum + memory.confirmationCount,0) : null;
+    return {id:item.normalizedKey ?? item.keyword,content:item.keyword,createdAt,confirmationCount,
+      topicGenre:resolveTopicGenre(item,item.keyword,interestGenreContext(item,memories)).id,interest:item};
+  }),order).map(row => row.interest);
+}
+
+export function renderInterestRegistry(container, items, memories = [], editing, order = 'category') {
   container.replaceChildren();
-  container.append(node('p', '会話から確認できた興味・関心と、それに結びついた記憶です。推定中の話題は状態タブに表示します。', 'muted small'));
   const confirmed = (items ?? []).filter(item =>
     (item.confirmationState === 'confirmed' || item.confirmationState == null) && item.explicitPolarity !== 'negative');
   if (!confirmed.length) container.append(node('p', '確定した興味・関心はまだありません。', 'muted'));
-  const blocks = node('div', null, 'interest-blocks');
-  for (const item of confirmed) {
-    const block = node('article', null, 'interest-block');
-    block.append(node('h3', item.keyword));
-    if (activityLabel(item)) {
-      block.append(node('p', activityLabel(item), 'interest-activity'));
-      if (item.activityStatus === 'paused') block.append(node('p', '最近は活動を休んでいます。興味の有無とは別の情報です。', 'muted small'));
+  const contextOf = item => interestGenreContext(item,memories);
+  const sorted = sortInterestItems(confirmed,memories,order);
+  const groups = order === 'category' ? groupByTopicGenre(sorted, item => item.keyword, contextOf) : [{genre:null,items:sorted}];
+  for (const {genre, items:groupItems} of groups) {
+    const section = node('section', null, 'interest-genre-group');
+    if (genre) section.append(node('h3', `${genre.label} · ${groupItems.length}件`, 'interest-genre-heading'));
+    const blocks = node('div', null, 'interest-blocks');
+    for (const item of groupItems) {
+      const block = node('article', null, 'interest-block');
+      block.append(node('h4', item.keyword));
+      block.append(createGenreEditor(item,resolveTopicGenre(item,item.keyword,contextOf(item)),editing));
+      if (activityLabel(item)) {
+        block.append(node('p', activityLabel(item), 'interest-activity'));
+      }
+      if (item.lastObservedAt && Number.isFinite(Date.parse(item.lastObservedAt))) block.append(node('p', `最後に話題に出た日時：${observedDate(item.lastObservedAt)}`, 'muted small'));
+      const linked = memories.filter(memory => typeof memory.content === 'string' && memory.content.trim() && item.sourceMemoryIds?.includes(memory.id));
+      const excerpts = Array.isArray(item.details) ? item.details.filter(detail => detail && Object.hasOwn(detailLabels, detail.kind) && typeof detail.content === 'string' && detail.content.trim()).slice(-12) : [];
+      const seen = new Set();
+      const details = node('details', null, 'interest-details');
+      details.append(node('summary', 'この興味に関する記憶'));
+      for (const detail of excerpts) {
+        const content = detail.content.trim().slice(0,240);
+        if (seen.has(content)) continue;
+        seen.add(content);
+        const entry = node('section', null, 'interest-excerpt');
+        entry.append(node('h4', detailLabels[detail.kind]), node('p', content));
+        details.append(entry);
+      }
+      for (const memory of linked) {
+        const content = memory.content.trim();
+        if (seen.has(content)) continue;
+        seen.add(content);
+        details.append(node('p', content));
+      }
+      if (seen.size) block.append(details);
+      else block.append(node('p', '詳しいエピソードはまだありません。', 'muted small'));
+      blocks.append(block);
     }
-    if (item.lastObservedAt && Number.isFinite(Date.parse(item.lastObservedAt))) block.append(node('p', `最後に話題に出た日時：${observedDate(item.lastObservedAt)}`, 'muted small'));
-    const linked = memories.filter(memory => typeof memory.content === 'string' && memory.content.trim() && item.sourceMemoryIds?.includes(memory.id));
-    const excerpts = Array.isArray(item.details) ? item.details.filter(detail => detail && Object.hasOwn(detailLabels, detail.kind) && typeof detail.content === 'string' && detail.content.trim()).slice(-12) : [];
-    const seen = new Set();
-    const details = node('details', null, 'interest-details');
-    details.append(node('summary', 'この興味に関する記憶'));
-    for (const detail of excerpts) {
-      const content = detail.content.trim().slice(0,240);
-      if (seen.has(content)) continue;
-      seen.add(content);
-      const entry = node('section', null, 'interest-excerpt');
-      entry.append(node('h4', detailLabels[detail.kind]), node('p', content));
-      details.append(entry);
-    }
-    for (const memory of linked) {
-      const content = memory.content.trim();
-      if (seen.has(content)) continue;
-      seen.add(content);
-      details.append(node('p', content));
-    }
-    if (seen.size) block.append(details);
-    else block.append(node('p', '詳しいエピソードはまだありません。', 'muted small'));
-    blocks.append(block);
+    section.append(blocks);
+    container.append(section);
   }
-  container.append(blocks);
 }
