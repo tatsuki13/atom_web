@@ -109,25 +109,41 @@ export function createGenreEditor(item, genre, editing) {
     const cancel = document.createElement('button');
     cancel.type = 'button'; cancel.className = 'secondary'; cancel.textContent = 'キャンセル';
     let action = null;
-    const close = () => {panel.hidden = true;actions.hidden = false;if (select) select.disabled = false;feedback.textContent = '';};
+    const draftKey = `${editing.kind}:${editing.keyOf(item)}`;
+    let draft = editing.drafts?.get(draftKey);
+    const discardDraft = () => {
+      if (draft && editing.drafts?.get(draftKey) === draft) editing.drafts.delete(draftKey);
+      draft = null;
+    };
+    const showDraft = () => {
+      action = draft.action; label.open = true;
+      actions.hidden = true; panel.hidden = false;
+      if (select) select.disabled = true;
+      input.value = draft.value;
+      input.hidden = action !== 'editRecord'; question.hidden = action !== 'deleteRecord';
+      confirm.textContent = action === 'editRecord' ? '保存' : '削除する';
+    };
+    input.addEventListener('input', () => { if (draft) draft.value = input.value; });
+    const close = () => {discardDraft();panel.hidden = true;actions.hidden = false;if (select) select.disabled = false;feedback.textContent = '';};
     for (const [value,text] of [['editRecord','訂正'],['deleteRecord','削除']]) {
       const button = document.createElement('button');
       button.type = 'button'; button.className = value === 'deleteRecord' ? 'record-delete secondary' : 'secondary'; button.textContent = text;
       button.addEventListener('click', () => {
-        action = value;actions.hidden = true;panel.hidden = false;if (select) select.disabled = true;feedback.textContent = '';
-        input.value = item.content ?? item.keyword ?? '';
-        input.hidden = value !== 'editRecord';question.hidden = value !== 'deleteRecord';
-        confirm.textContent = value === 'editRecord' ? '保存' : '削除する';
+        draft = {action:value,value:item.content ?? item.keyword ?? '',expectedContent:item.content ?? item.keyword};
+        editing.drafts?.set(draftKey,draft);
+        showDraft(); feedback.textContent = '';
         if (value === 'editRecord') input.focus();else cancel.focus();
       });
       actions.append(button);
     }
+    if (draft) showDraft();
     cancel.addEventListener('click',close);
     confirm.addEventListener('click',async () => {
       if (action === 'editRecord' && !input.value.trim()) {feedback.textContent = '内容を入力してください。';input.focus();return;}
       confirm.disabled = true;cancel.disabled = true;input.disabled = true;feedback.textContent = '処理中…';
       try {
-        await editing.change(editing.kind,editing.keyOf(item),action,item.content ?? item.keyword,input.value);
+        await editing.change(editing.kind,editing.keyOf(item),action,draft?.expectedContent ?? item.content ?? item.keyword,input.value);
+        discardDraft();
       } catch (error) {
         feedback.textContent = error?.code === 'functions/failed-precondition' ? '内容が変更されています。一覧を更新してください。' : error?.code === 'functions/already-exists' ? '同じ項目名がすでにあります。' : '処理できませんでした。一覧を更新して確認してください。';
       } finally {confirm.disabled = false;cancel.disabled = false;input.disabled = false;}

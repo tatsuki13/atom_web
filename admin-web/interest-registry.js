@@ -1,5 +1,5 @@
-import {groupByTopicGenre, resolveTopicGenre, createGenreEditor} from './topic-genres.js?v=20261030-edit-lock';
-import {sortMemories} from './memory-list.js?v=20261030-edit-lock';
+import {groupByTopicGenre, resolveTopicGenre, createGenreEditor} from './topic-genres.js?v=20261030-drafts';
+import {sortMemories} from './memory-list.js?v=20261030-drafts';
 
 const node = (tag, text, className) => {
   const result = document.createElement(tag);

@@ -3,8 +3,8 @@ import { getAuth, setPersistence, browserSessionPersistence, signInWithEmailAndP
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-functions.js';
 import { getFirestore, collection, query, where, orderBy, limit, getDocsFromServer } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js';
 import { renderStateTrend, closeStateTrendPopup } from './state-trend.js';
-import { renderInterestRegistry, renderInterestChart } from './interest-registry.js?v=20261030-edit-lock';
-import { renderMemoryList, fitMemoryList, fitInterestList } from './memory-list.js?v=20261030-edit-lock';
+import { renderInterestRegistry, renderInterestChart } from './interest-registry.js?v=20261030-drafts';
+import { renderMemoryList, fitMemoryList, fitInterestList } from './memory-list.js?v=20261030-drafts';
 
 const $ = id => document.getElementById(id);
 let auth, db, load, authorized = false, revision = 0, selectedLoginId = '', selectedConversation = null;
@@ -13,6 +13,7 @@ let visibleMemories = [];
 let visibleInterests = [], genreEditingEnabled = false;
 let recordEditingEnabled = false;
 let recordWritePending = false;
+const recordDrafts = new Map();
 
 // A successful write redraws these views. Block edits in all of them until it
 // finishes so that the redraw cannot discard a draft entered during the write.
@@ -41,6 +42,7 @@ const date = value => {
 };
 function status(message = '', error = false) { $('status').textContent = message; $('status').hidden = !message; $('status').classList.toggle('error', error); }
 function resetData() {
+  recordDrafts.clear();
   closeStateTrendPopup($('state-trend'));
   visibleMemories = [];
   visibleInterests = []; genreEditingEnabled = false;
@@ -117,7 +119,7 @@ function renderMemories() {
   fitMemoryPanels();
 }
 function genreEditing(kind) {
-  return {kind,keyOf:item=>kind === 'memory' ? item.id : item.normalizedKey ?? item.keyword,
+  return {kind,drafts:recordDrafts,keyOf:item=>kind === 'memory' ? item.id : item.normalizedKey ?? item.keyword,
     save:genreEditingEnabled ? saveGenre : null,change:recordEditingEnabled ? changeRecord : null};
 }
 async function changeRecord(kind,key,action,expectedContent,content) {

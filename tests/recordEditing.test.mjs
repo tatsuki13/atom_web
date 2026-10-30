@@ -146,3 +146,57 @@ test('review: switching user during write preserves new sorting state and unlock
  for(const id of ['memories','keywords','interest-chart']) assert.equal(s.el(id).inert,false);
  assert.equal(s.requests.length,3);
 });
+
+const typeDraft = (root,value) => {
+ const input=findNode(root,'textarea');input.value=value;input.listeners.input?.();return input;
+};
+const assertDraft = (root,value) => {
+ assert.equal(findNode(root,'textarea').value,value);
+ const menu=descendants(root).find(n=>n.className==='genre-editor');
+ assert.equal(menu.open,true);
+ assert.equal(descendants(menu).find(n=>n.className==='record-edit-panel').hidden,false);
+};
+test('drafts: memory correction survives another interest genre save',async()=>{
+ const s=await withEditing({interestKeywords:[{keyword:'料理',normalizedKey:'cook',confirmationState:'confirmed'}]});
+ const root=s.el('memories');findNode(root,'button','訂正').listeners.click();typeDraft(root,'未保存の文章');
+ const select=findNode(s.el('keywords'),'select');select.value='person';const p=select.listeners.change();
+ s.requests[1].resolve({data:{saved:true,uid:'target',topicGenre:'person'}});await p;
+ assertDraft(root,'未保存の文章');
+ const pending=findNode(root,'button','保存').listeners.click();
+ assert.equal(s.requests[2].data.content,'未保存の文章');assert.equal(s.requests[2].data.expectedContent,'料理が好き');
+ s.requests[2].reject({code:'functions/unavailable'});await pending;assertDraft(root,'未保存の文章');
+});
+for(const order of ['oldest','newest','category','frequency']) test('drafts: correction survives sorting: '+order,async()=>{
+ const s=await withEditing();const root=s.el('memories');findNode(root,'button','訂正').listeners.click();typeDraft(root,'訂正文');
+ s.el('memory-sort').value=order;s.el('memory-sort').listeners.change();assertDraft(root,'訂正文');
+ assert.equal(s.requests.length,1,'sorting drafts must not write');
+});
+test('drafts: interest correction survives a memory genre save and sorting',async()=>{
+ const s=await withEditing({interestKeywords:[{keyword:'料理',normalizedKey:'cook',confirmationState:'confirmed'}]});
+ const root=s.el('keywords');findNode(root,'button','訂正').listeners.click();typeDraft(root,'園芸');
+ const select=findNode(s.el('memories'),'select');select.value='person';const p=select.listeners.change();
+ s.requests[1].resolve({data:{saved:true,uid:'target',topicGenre:'person'}});await p;assertDraft(root,'園芸');
+ s.el('memory-sort').value='frequency';s.el('memory-sort').listeners.change();assertDraft(root,'園芸');
+});
+test('drafts: cancellation prevents an old draft from returning on sort',async()=>{
+ const s=await withEditing();const root=s.el('memories');findNode(root,'button','訂正').listeners.click();typeDraft(root,'破棄する文章');
+ findNode(root,'button','キャンセル').listeners.click();s.el('memory-sort').listeners.change();
+ assert.equal(findNode(root,'textarea').value,'');assert.equal(descendants(root).find(n=>n.className==='record-edit-panel').hidden,true);
+ findNode(root,'button','訂正').listeners.click();assert.equal(findNode(root,'textarea').value,'料理が好き');
+});
+test('drafts: switching users clears drafts even when their record IDs match',async()=>{
+ const s=await withEditing();const root=s.el('memories');findNode(root,'button','訂正').listeners.click();typeDraft(root,'秘密の文章');
+ s.el('target-login-id').value='other';s.el('target-login-id').listeners.input();s.submit();
+ s.requests[1].resolve({data:{...sample('other'),capabilities:{recordEditing:true},memories:[{id:'m',content:'別の利用者'}]}});await tick();
+ assert.equal(findNode(root,'textarea').value,'');assert.equal(descendants(root).find(n=>n.className==='record-edit-panel').hidden,true);
+});
+test('drafts: empty input stays empty across redraw and cannot be saved',async()=>{
+ const s=await withEditing();const root=s.el('memories');findNode(root,'button','訂正').listeners.click();typeDraft(root,'');
+ s.el('memory-sort').listeners.change();assertDraft(root,'');await findNode(root,'button','保存').listeners.click();assert.equal(s.requests.length,1);
+});
+test('drafts: saved correction is not resurrected by subsequent sorting',async()=>{
+ const s=await withEditing();const root=s.el('memories');findNode(root,'button','訂正').listeners.click();typeDraft(root,'園芸');
+ const p=findNode(root,'button','保存').listeners.click();s.requests[1].resolve({data:{saved:true,uid:'target',action:'editRecord',key:'m'}});await tick();
+ s.requests[2].resolve({data:{...sample('target'),capabilities:{recordEditing:true},memories:[{id:'m',content:'園芸'}]}});await p;
+ s.el('memory-sort').listeners.change();assert.equal(descendants(root).find(n=>n.className==='record-edit-panel').hidden,true);
+});
