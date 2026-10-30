@@ -1,4 +1,4 @@
-import {resolveTopicGenre, createGenreEditor} from './topic-genres.js?v=20261029-capabilities';
+import {resolveTopicGenre, createGenreEditor} from './topic-genres.js?v=20261030-edit-lock';
 const memoryTime = memory => {
   const value = memory.createdAt ? Date.parse(memory.createdAt) : NaN;
   return Number.isFinite(value) ? value : null;

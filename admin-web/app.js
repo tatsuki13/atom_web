@@ -3,8 +3,8 @@ import { getAuth, setPersistence, browserSessionPersistence, signInWithEmailAndP
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-functions.js';
 import { getFirestore, collection, query, where, orderBy, limit, getDocsFromServer } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js';
 import { renderStateTrend, closeStateTrendPopup } from './state-trend.js';
-import { renderInterestRegistry, renderInterestChart } from './interest-registry.js?v=20261029-capabilities';
-import { renderMemoryList, fitMemoryList, fitInterestList } from './memory-list.js?v=20261029-capabilities';
+import { renderInterestRegistry, renderInterestChart } from './interest-registry.js?v=20261030-edit-lock';
+import { renderMemoryList, fitMemoryList, fitInterestList } from './memory-list.js?v=20261030-edit-lock';
 
 const $ = id => document.getElementById(id);
 let auth, db, load, authorized = false, revision = 0, selectedLoginId = '', selectedConversation = null;
@@ -12,6 +12,28 @@ let verifiedAdminUid = null, authRevision = 0;
 let visibleMemories = [];
 let visibleInterests = [], genreEditingEnabled = false;
 let recordEditingEnabled = false;
+let recordWritePending = false;
+
+// A successful write redraws these views. Block edits in all of them until it
+// finishes so that the redraw cannot discard a draft entered during the write.
+async function withRecordWrite(write) {
+  if (recordWritePending) throw new Error('write pending');
+  recordWritePending = true;
+  const current = revision;
+  const panels = ['memories','keywords','interest-chart'].map($);
+  const inertStates = panels.map(panel => panel.inert);
+  const sortDisabled = $('memory-sort').disabled;
+  for (const panel of panels) panel.inert = true;
+  $('memory-sort').disabled = true;
+  try {
+    return await write();
+  } finally {
+    recordWritePending = false;
+    panels.forEach((panel,index) => { panel.inert = inertStates[index]; });
+    // A lookup or logout may have replaced the data and its sorting state.
+    if (current === revision) $('memory-sort').disabled = sortDisabled;
+  }
+}
 const date = value => {
   if (!value) return '—';
   const parsed = new Date(value);
@@ -100,11 +122,13 @@ function genreEditing(kind) {
 }
 async function changeRecord(kind,key,action,expectedContent,content) {
   if (!authorized || !recordEditingEnabled) throw new Error('unauthorized');
-  const current = revision,uid = $('target-uid').textContent,loginId = selectedLoginId;
-  const response = (await load({loginId,action,kind,key,expectedContent,...(action === 'editRecord' ? {content} : {})})).data;
-  if (!authorized || current !== revision || uid !== $('target-uid').textContent) return;
-  if (response?.saved !== true || response.uid !== uid || response.action !== action || response.key !== key) throw new Error('save failed');
-  await fetchData(loginId,selectedConversation);
+  return withRecordWrite(async () => {
+    const current = revision,uid = $('target-uid').textContent,loginId = selectedLoginId;
+    const response = (await load({loginId,action,kind,key,expectedContent,...(action === 'editRecord' ? {content} : {})})).data;
+    if (!authorized || current !== revision || uid !== $('target-uid').textContent) return;
+    if (response?.saved !== true || response.uid !== uid || response.action !== action || response.key !== key) throw new Error('save failed');
+    await fetchData(loginId,selectedConversation);
+  });
 }
 function renderInterests() {
   renderInterestChart($('interest-chart'),visibleInterests,genreEditing('interest'),visibleMemories);
@@ -117,14 +141,16 @@ function fitMemoryPanels() {
 }
 async function saveGenre(kind, key, topicGenre) {
   if (!authorized || !genreEditingEnabled) throw new Error('unauthorized');
-  const current = revision, uid = $('target-uid').textContent;
-  const result = (await load({loginId:selectedLoginId,action:'setTopicGenre',kind,key,topicGenre})).data;
-  if (!authorized || current !== revision || uid !== $('target-uid').textContent) return;
-  if (result?.saved !== true || result.uid !== uid || result.topicGenre !== topicGenre) throw new Error('save failed');
-  const rows = kind === 'memory' ? visibleMemories : visibleInterests;
-  for (const item of rows) if (genreEditing(kind).keyOf(item) === key) item.topicGenre = topicGenre;
-  renderMemories(); renderInterests();
-  status('ジャンルを保存しました。');
+  return withRecordWrite(async () => {
+    const current = revision, uid = $('target-uid').textContent;
+    const result = (await load({loginId:selectedLoginId,action:'setTopicGenre',kind,key,topicGenre})).data;
+    if (!authorized || current !== revision || uid !== $('target-uid').textContent) return;
+    if (result?.saved !== true || result.uid !== uid || result.topicGenre !== topicGenre) throw new Error('save failed');
+    const rows = kind === 'memory' ? visibleMemories : visibleInterests;
+    for (const item of rows) if (genreEditing(kind).keyOf(item) === key) item.topicGenre = topicGenre;
+    renderMemories(); renderInterests();
+    status('ジャンルを保存しました。');
+  });
 }
 $('memory-sort').addEventListener('change', () => {
   renderMemories();
