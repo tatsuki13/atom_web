@@ -3,11 +3,38 @@ import { getAuth, setPersistence, browserSessionPersistence, signInWithEmailAndP
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-functions.js';
 import { getFirestore, collection, query, where, orderBy, limit, getDocsFromServer } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js';
 import { renderStateTrend, closeStateTrendPopup } from './state-trend.js';
-import { renderInterestRegistry, renderInterestChart } from './interest-registry.js';
+import { renderInterestRegistry, renderInterestChart } from './interest-registry.js?v=20261030-drafts';
+import { renderMemoryList, fitMemoryList, fitInterestList } from './memory-list.js?v=20261030-drafts';
 
 const $ = id => document.getElementById(id);
 let auth, db, load, authorized = false, revision = 0, selectedLoginId = '', selectedConversation = null;
 let verifiedAdminUid = null, authRevision = 0;
+let visibleMemories = [];
+let visibleInterests = [], genreEditingEnabled = false;
+let recordEditingEnabled = false;
+let recordWritePending = false;
+const recordDrafts = new Map();
+
+// A successful write redraws these views. Block edits in all of them until it
+// finishes so that the redraw cannot discard a draft entered during the write.
+async function withRecordWrite(write) {
+  if (recordWritePending) throw new Error('write pending');
+  recordWritePending = true;
+  const current = revision;
+  const panels = ['memories','keywords','interest-chart'].map($);
+  const inertStates = panels.map(panel => panel.inert);
+  const sortDisabled = $('memory-sort').disabled;
+  for (const panel of panels) panel.inert = true;
+  $('memory-sort').disabled = true;
+  try {
+    return await write();
+  } finally {
+    recordWritePending = false;
+    panels.forEach((panel,index) => { panel.inert = inertStates[index]; });
+    // A lookup or logout may have replaced the data and its sorting state.
+    if (current === revision) $('memory-sort').disabled = sortDisabled;
+  }
+}
 const date = value => {
   if (!value) return '—';
   const parsed = new Date(value);
@@ -15,7 +42,14 @@ const date = value => {
 };
 function status(message = '', error = false) { $('status').textContent = message; $('status').hidden = !message; $('status').classList.toggle('error', error); }
 function resetData() {
+  recordDrafts.clear();
   closeStateTrendPopup($('state-trend'));
+  visibleMemories = [];
+  visibleInterests = []; genreEditingEnabled = false;
+  recordEditingEnabled = false;
+  $('memory-sort').disabled = true;
+  $('memory-count').textContent = '';
+  $('memory-scroll-hint').hidden = true;
   revision++; selectedLoginId = ''; selectedConversation = null;
   $('results').hidden = true;
   $('physical-note').textContent = '';
@@ -66,19 +100,71 @@ function render(data) {
   $('conversation-note').hidden = !data.limits?.conversations;
   renderStateTrend($('state-trend'), data.emotionHistory, data.limits?.emotionHistory === true);
   renderPhysical(null);
-  renderInterestChart($('interest-chart'), data.interestKeywords ?? []);
-  renderInterestRegistry($('keywords'), data.interestKeywords ?? [], data.memories ?? []);
-  const memories = data.memories ?? [];
-  $('memory-count').textContent = `${memories.length}件`;
-  $('memories').replaceChildren(...(memories.length ? memories.map(memory => {
-    const node = element('article',null,'memory');
-    node.append(element('p',memory.content),element('small',`保存: ${date(memory.createdAt)}`));
-    return node;
-  }) : [element('p','記憶がありません。','muted')]));
-  $('memory-note').textContent = data.limits?.memories ? '300件を表示' : '';
+  visibleMemories = data.memories ?? [];
+  visibleInterests = data.interestKeywords ?? [];
+  genreEditingEnabled = data.capabilities?.topicGenreEditing === true;
+  recordEditingEnabled = data.capabilities?.recordEditing === true;
+  renderInterests();
+  $('memory-count').textContent = `${visibleMemories.length}件`;
+  $('memory-sort').disabled = visibleMemories.length === 0 && !visibleInterests.some(item =>
+    (item.confirmationState === 'confirmed' || item.confirmationState == null) && item.explicitPolarity !== 'negative');
+  renderMemories();
+  $('memory-note').textContent = data.limits?.memories ? '取得した300件の範囲で並べ替えています。' : '';
   $('memory-note').hidden = !data.limits?.memories;
   $('results').hidden = false;
 }
+function renderMemories() {
+  renderMemoryList($('memories'), visibleMemories, $('memory-sort').value || 'category', date, genreEditing('memory'));
+  $('memory-scroll-hint').hidden = visibleMemories.length <= 9;
+  fitMemoryPanels();
+}
+function genreEditing(kind) {
+  return {kind,drafts:recordDrafts,keyOf:item=>kind === 'memory' ? item.id : item.normalizedKey ?? item.keyword,
+    save:genreEditingEnabled ? saveGenre : null,change:recordEditingEnabled ? changeRecord : null};
+}
+async function changeRecord(kind,key,action,expectedContent,content) {
+  if (!authorized || !recordEditingEnabled) throw new Error('unauthorized');
+  return withRecordWrite(async () => {
+    const current = revision,uid = $('target-uid').textContent,loginId = selectedLoginId;
+    const response = (await load({loginId,action,kind,key,expectedContent,...(action === 'editRecord' ? {content} : {})})).data;
+    if (!authorized || current !== revision || uid !== $('target-uid').textContent) return;
+    if (response?.saved !== true || response.uid !== uid || response.action !== action || response.key !== key) throw new Error('save failed');
+    await fetchData(loginId,selectedConversation);
+  });
+}
+function renderInterests() {
+  renderInterestChart($('interest-chart'),visibleInterests,genreEditing('interest'),visibleMemories);
+  renderInterestRegistry($('keywords'),visibleInterests,visibleMemories,genreEditing('interest'),$('memory-sort').value || 'category');
+  fitMemoryPanels();
+}
+function fitMemoryPanels() {
+  fitMemoryList($('memories'));
+  fitInterestList($('memories'),$('keywords'));
+}
+async function saveGenre(kind, key, topicGenre) {
+  if (!authorized || !genreEditingEnabled) throw new Error('unauthorized');
+  return withRecordWrite(async () => {
+    const current = revision, uid = $('target-uid').textContent;
+    const result = (await load({loginId:selectedLoginId,action:'setTopicGenre',kind,key,topicGenre})).data;
+    if (!authorized || current !== revision || uid !== $('target-uid').textContent) return;
+    if (result?.saved !== true || result.uid !== uid || result.topicGenre !== topicGenre) throw new Error('save failed');
+    const rows = kind === 'memory' ? visibleMemories : visibleInterests;
+    for (const item of rows) if (genreEditing(kind).keyOf(item) === key) item.topicGenre = topicGenre;
+    renderMemories(); renderInterests();
+    status('ジャンルを保存しました。');
+  });
+}
+$('memory-sort').addEventListener('change', () => {
+  renderMemories();
+  renderInterestRegistry($('keywords'),visibleInterests,visibleMemories,genreEditing('interest'),$('memory-sort').value || 'category');
+  $('keywords').scrollTop = 0;
+  fitMemoryPanels();
+});
+if (typeof ResizeObserver !== 'undefined') {
+  const observer = new ResizeObserver(fitMemoryPanels);
+  observer.observe($('memories')); observer.observe($('keywords'));
+}
+$('keywords').addEventListener('toggle',fitMemoryPanels,true);
 function renderPhysical(data) {
   const physical = data?.physicalSignals;
   const value = (number, unit) => typeof number === 'number' && Number.isFinite(number) && number >= 0
@@ -196,7 +282,9 @@ $('physical-refresh').addEventListener('click',() => fetchPhysicalData(selectedL
 $('conversation').addEventListener('change',event => fetchData(selectedLoginId,event.target.value));
 function tab(name) {
   closeStateTrendPopup($('state-trend'));
+  $('memory-sort-control').hidden = name !== 'memory';
   for (const key of ['state','memory']) { const active = key === name; $(`${key}-tab`).setAttribute('aria-selected',String(active)); $(`${key}-tab`).tabIndex = active ? 0 : -1; $(`${key}-panel`).hidden = !active; }
+  if (name === 'memory') fitMemoryPanels();
 }
 globalThis.addEventListener('resize',()=>closeStateTrendPopup($('state-trend')));
 globalThis.addEventListener('scroll',()=>closeStateTrendPopup($('state-trend')));

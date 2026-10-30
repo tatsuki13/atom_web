@@ -3,11 +3,13 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 const trendSource = (await readFile(new URL('../admin-web/state-trend.js',import.meta.url),'utf8')).replace(/^export /gm,'');
-const interestSource = (await readFile(new URL('../admin-web/interest-registry.js',import.meta.url),'utf8')).replace(/^export /gm,'');
-const source = trendSource + '\n' + interestSource + '\n' + (await readFile(new URL('../admin-web/app.js',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'');
+const topicSource = (await readFile(new URL('../admin-web/topic-genres.js',import.meta.url),'utf8')).replace(/^export /gm,'');
+const interestSource = (await readFile(new URL('../admin-web/interest-registry.js',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'').replace(/^export /gm,'');
+const memorySource = (await readFile(new URL('../admin-web/memory-list.js',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'').replace(/^export /gm,'');
+const source = trendSource + '\n' + topicSource + '\n' + interestSource + '\n' + memorySource + '\n' + (await readFile(new URL('../admin-web/app.js',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'');
 class Element {
   hidden = false; disabled = false; value = ''; textContent = ''; children = []; attributes = {}; listeners = {};
-  style = {setProperty(){}}; classList = {toggle(){}};
+  style = {values:{},setProperty(key,value){this.values[key]=value;}}; classList = {toggle(){}};
   append(...nodes){this.children.push(...nodes);}
   replaceChildren(...nodes){this.children = nodes;}
   setAttribute(key,value){this.attributes[key] = value;}
@@ -49,6 +51,193 @@ async function setup(admin = true) {
 const sample = uid => ({uid,loginId:uid,date:'2026-10-13',conversationId:'c1',conversations:[{id:'c1',title:'会話',messageCount:2}],
   memories:[{content:'<img src=x onerror=alert(1)>'}],interestKeywords:[],emotionState:{positive_affect:.7,anxiety:null},physicalSignals:null});
 const healthSnapshot = (id,data) => ({docs:id ? [{id,data:()=>data}] : []});
+const descendants = node => [node,...node.children.flatMap(descendants)];
+
+test('record editing alone allows gear corrections, cancellation and confirmed deletion',async()=>{
+  const {el,requests,submit}=await setup();
+  const data={...sample('target'),capabilities:{recordEditing:true},memories:[{id:'m',content:'料理が好き'}],interestKeywords:[]};
+  el('target-login-id').value='target';submit();requests[0].resolve({data});await tick();
+  const find=(tag,text)=>descendants(el('memories')).find(node=>node.tagName===tag && (text===undefined || node.textContent===text));
+  assert.equal(find('select'),undefined,'genre changes are not offered when unsupported');
+  find('button','訂正').listeners.click();
+  const input=find('textarea');assert.equal(input.value,'料理が好き');input.value='園芸が好き';
+  const save=find('button','保存');const edited=save.listeners.click();
+  assert.equal(requests[1].data.action,'editRecord');assert.equal(requests[1].data.expectedContent,'料理が好き');assert.equal(requests[1].data.content,'園芸が好き');
+  requests[1].resolve({data:{saved:true,uid:'target',action:'editRecord',key:'m'}});await tick();
+  requests[2].resolve({data:{...data,memories:[{id:'new',content:'園芸が好き'}]}});await edited;
+  find('button','削除').listeners.click();assert.equal(requests.length,3,'opening deletion must not write data');
+  const cancel=find('button','キャンセル');assert.equal(cancel.focused,true);cancel.listeners.click();assert.equal(requests.length,3);
+  find('button','削除').listeners.click();const deleted=find('button','削除する').listeners.click();
+  assert.equal(requests[3].data.action,'deleteRecord');assert.equal(requests[3].data.key,'new');
+  requests[3].resolve({data:{saved:true,uid:'target',action:'deleteRecord',key:'new'}});await tick();
+  requests[4].resolve({data:{...data,memories:[]}});await deleted;
+  assert.ok(descendants(el('memories')).some(node=>node.textContent==='記憶がありません。'));
+});
+
+test('genre and record capabilities independently control all shared gear menus',async()=>{
+  for (const capabilities of [{},{topicGenreEditing:false,recordEditing:true},{topicGenreEditing:true,recordEditing:false},{topicGenreEditing:true,recordEditing:true}]) {
+    const {el,requests,submit}=await setup();
+    el('target-login-id').value='target';submit();
+    requests[0].resolve({data:{...sample('target'),capabilities,memories:[{id:'m',content:'料理が好き'}],interestKeywords:[{keyword:'料理',normalizedKey:'料理',interestScore:.8,activityStatus:'active'}]}});await tick();
+    const keyword=descendants(el('interest-chart')).find(node=>node.attributes['data-interest-keyword']==='0');
+    keyword.listeners.click();
+    for (const target of ['memories','keywords','interest-chart']) {
+      const menu=descendants(el(target)).find(node=>node.className==='genre-editor');
+      assert.equal(menu.hidden,!(capabilities.topicGenreEditing || capabilities.recordEditing),target);
+      assert.equal(descendants(menu).some(node=>node.tagName==='select'),capabilities.topicGenreEditing===true,target);
+      assert.equal(descendants(menu).some(node=>node.className==='record-actions'),capabilities.recordEditing===true,target);
+    }
+    assert.equal(requests.length,1,'rendering capability combinations must not perform writes');
+  }
+});
+
+test('one sort control orders interests and memories together and works with interests alone',async () => {
+  const {el,requests,submit}=await setup();
+  el('target-login-id').value='target';submit();
+  const data={...sample('target'),memories:[
+    {id:'food',content:'料理',createdAt:'2026-10-01',confirmationCount:5},
+    {id:'garden',content:'園芸',createdAt:'2026-10-02',confirmationCount:2},
+  ],interestKeywords:[{keyword:'料理',sourceMemoryIds:['food']},{keyword:'園芸',sourceMemoryIds:['garden']},{keyword:'不明'}]};
+  requests[0].resolve({data});await tick();
+  el('memory-tab').listeners.click();assert.equal(el('memory-sort-control').hidden,false);
+  el('state-tab').listeners.click();assert.equal(el('memory-sort-control').hidden,true);
+  const titles=()=>descendants(el('keywords')).filter(node=>node.className==='interest-block').map(node=>node.children[0].textContent);
+  assert.deepEqual(titles(),['料理','園芸','不明']);
+  el('memory-sort').value='newest';el('memory-sort').listeners.change();
+  assert.deepEqual(titles(),['園芸','料理','不明']);
+  assert.equal(el('memories').children[0].children[0].textContent,'園芸');
+  el('memory-sort').value='oldest';el('memory-sort').listeners.change();
+  assert.deepEqual(titles(),['料理','園芸','不明']);
+  el('memory-sort').value='frequency';el('memory-sort').listeners.change();
+  assert.deepEqual(titles(),['料理','園芸','不明']);
+  assert.equal(requests.length,1,'shared sorting is local');
+  el('refresh').listeners.click();requests[1].resolve({data:{...data,memories:[]}});await tick();
+  assert.equal(el('memory-sort').disabled,false,'interests can be sorted without any memories');
+});
+
+test('interest sorting uses observed dates and never fabricates counts from missing linked memories',async () => {
+  const {el,requests,submit}=await setup();
+  el('target-login-id').value='target';submit();
+  requests[0].resolve({data:{...sample('target'),memories:[{id:'m',content:'料理',confirmationCount:3,createdAt:'2026-10-01'}],
+    interestKeywords:[{keyword:'料理',sourceMemoryIds:['m','m']},{keyword:'園芸',sourceMemoryIds:['m','missing'],lastObservedAt:'2026-10-20'},{keyword:'読書',lastObservedAt:'invalid'}]}});await tick();
+  const titles=()=>descendants(el('keywords')).filter(node=>node.className==='interest-block').map(node=>node.children[0].textContent);
+  el('memory-sort').value='newest';el('memory-sort').listeners.change();assert.deepEqual(titles(),['園芸','料理','読書']);
+  el('memory-sort').value='frequency';el('memory-sort').listeners.change();assert.deepEqual(titles(),['料理','園芸','読書']);
+});
+
+test('manual genre saves persist on refresh, regroup interests, and can return to automatic',async () => {
+  const {el,requests,submit}=await setup();
+  const data={...sample('target'),capabilities:{topicGenreEditing:true},memories:[{id:'m',content:'りんごが好き'}],
+    interestKeywords:[{normalizedKey:'apple',keyword:'りんご',confirmationState:'confirmed'}]};
+  el('target-login-id').value='target';submit();requests[0].resolve({data});await tick();
+  const editor=target=>descendants(el(target)).find(node=>node.className==='genre-editor').children.find(node=>node.tagName==='select');
+  const menu=descendants(el('keywords')).find(node=>node.className==='genre-editor');
+  assert.equal(menu.tagName,'details');
+  assert.ok(!menu.open,'genre selection stays collapsed until the gear is activated');
+  assert.match(menu.children[0].attributes['aria-label'],/ジャンルを変更/);
+  menu.open=true;menu.listeners.keydown({key:'Escape'});
+  assert.equal(menu.open,false);assert.equal(menu.children[0].focused,true);
+  const select=editor('keywords');select.value='person';const pending=select.listeners.change();
+  assert.equal(select.disabled,true);
+  assert.deepEqual(JSON.parse(JSON.stringify(requests[1].data)),{loginId:'target',action:'setTopicGenre',kind:'interest',key:'apple',topicGenre:'person'});
+  requests[1].resolve({data:{saved:true,uid:'target',topicGenre:'person'}});await pending;
+  assert.ok(descendants(el('keywords')).some(node=>node.className==='interest-genre-heading' && node.textContent==='人名・人物 · 1件'));
+  assert.ok(descendants(el('interest-chart')).some(node=>node.className==='interest-genre-heading' && node.textContent==='人名・人物 · 1件'));
+  el('refresh').listeners.click();
+  requests[2].resolve({data:{...data,interestKeywords:[{...data.interestKeywords[0],topicGenre:'person'}]}});await tick();
+  assert.equal(editor('keywords').value,'person');
+  editor('keywords').value='';const reset=editor('keywords').listeners.change();
+  assert.equal(requests[3].data.topicGenre,null);
+  requests[3].resolve({data:{saved:true,uid:'target',topicGenre:null}});await reset;
+  assert.ok(descendants(el('keywords')).some(node=>node.className==='interest-genre-heading' && node.textContent==='食べ物・料理 · 1件'));
+  const memorySelect=editor('memories');memorySelect.value='person';const memorySave=memorySelect.listeners.change();
+  assert.equal(requests[4].data.kind,'memory');assert.equal(requests[4].data.key,'m');
+  requests[4].resolve({data:{saved:true,uid:'target',topicGenre:'person'}});await memorySave;
+  assert.ok(descendants(el('memories')).some(node=>node.className==='memory-group-heading' && node.textContent==='人名・人物 · 1件'));
+});
+
+test('genre save failure retains the old category and delayed saves cannot restore another user',async () => {
+  const {el,requests,submit}=await setup();
+  el('target-login-id').value='target';submit();
+  requests[0].resolve({data:{...sample('target'),capabilities:{topicGenreEditing:true},memories:[{id:'m',content:'カレー'}]}});await tick();
+  const select=descendants(el('memories')).find(node=>node.tagName==='select');
+  select.value='person';const failed=select.listeners.change();requests[1].reject(new Error('offline'));await failed;
+  assert.equal(select.value,'');assert.equal(select.disabled,false);
+  assert.ok(descendants(el('memories')).some(node=>String(node.textContent).includes('保存できませんでした')));
+  select.value='person';const delayed=select.listeners.change();
+  el('target-login-id').value='other';el('target-login-id').listeners.input();submit();
+  requests[3].resolve({data:{...sample('other'),memories:[{id:'other',content:'園芸'}]}});await tick();
+  requests[2].resolve({data:{saved:true,uid:'target',topicGenre:'person'}});await delayed;
+  assert.equal(el('target-uid').textContent,'other');
+  assert.ok(!descendants(el('memories')).some(node=>node.textContent==='カレー'));
+  assert.equal(descendants(el('memories')).filter(node=>node.tagName==='select').length,0,'old API must not expose unsupported writes');
+});
+
+test('memory and interest genres are inferred and grouped even when the API has no category fields',async () => {
+  const {el,requests,submit}=await setup();
+  el('target-login-id').value='target';submit();
+  requests[0].resolve({data:{...sample('target'),memories:[
+    {id:'g',content:'園芸が好きです'}, {id:'c',content:'コーヒーが好きです'}, {id:'u',content:'具体的な話題が不明です'},
+  ],interestKeywords:[
+    {keyword:'園芸',sourceMemoryIds:['g']}, {keyword:'コーヒー',sourceMemoryIds:['c']},
+    {keyword:'いつもの楽しみ',sourceMemoryIds:['g']}, {keyword:'雑談'},
+    {keyword:'読書',confirmationState:'inferred'},
+  ]}});await tick();
+  const walk=node=>[node,...node.children.flatMap(walk)];
+  const headings=walk(el('memories')).filter(node=>node.className==='memory-group-heading').map(node=>node.textContent);
+  assert.deepEqual(headings,['食べ物・料理 · 1件','園芸・自然 · 1件','その他 · 1件']);
+  assert.equal(el('memory-count').textContent,'3件');
+  const interestHeadings=walk(el('keywords')).filter(node=>node.className==='interest-genre-heading').map(node=>node.textContent);
+  assert.deepEqual(interestHeadings,['食べ物・料理 · 1件','園芸・自然 · 2件','その他 · 1件']);
+  assert.ok(walk(el('interest-chart')).some(node=>node.className==='interest-genre-heading' && node.textContent==='読書・学び · 1件'),'state tab also groups inferred interests without confirming them');
+  assert.equal(walk(el('keywords')).filter(node=>node.className==='interest-block').length,4);
+  assert.ok(!walk(el('keywords')).some(node=>node.textContent==='読書'));
+  assert.equal(requests.length,1,'classification must not require a new API call');
+});
+
+test('memory order changes locally, scrolls from the tenth card, and preserves the choice on refresh',async () => {
+  const {el,requests,submit} = await setup();
+  el('memory-sort').value='newest';
+  el('target-login-id').value='target';submit();
+  const memories=Array.from({length:12},(_,i)=>({id:`m${i}`,content:i===0?'料理が好き':`記憶${i}`,category:i===0?'preference':'routine',
+    confirmationCount:i===3?7:1,createdAt:`2026-10-${String(i+1).padStart(2,'0')}T00:00:00Z`}));
+  requests[0].resolve({data:{...sample('target'),memories}});await tick();
+  const first=()=>el('memories').children.find(child=>child.className==='memory').children[0].textContent;
+  assert.equal(first(),'記憶11');
+  assert.equal(el('memories').children.length,12);
+  assert.equal(el('memories').tabIndex,0);
+  assert.equal(el('memories').style.values['--memory-list-height'],'900px');
+  assert.equal(el('memory-scroll-hint').hidden,false);
+  el('memories').scrollTop=350;
+  el('memory-sort').value='frequency';el('memory-sort').listeners.change();
+  assert.equal(first(),'記憶3');
+  assert.equal(el('memories').scrollTop,0);
+  assert.equal(requests.length,1,'sorting must not fetch again');
+  el('memory-sort').value='category';el('memory-sort').listeners.change();assert.equal(first(),'料理が好き');
+  el('memory-sort').value='oldest';el('memory-sort').listeners.change();assert.equal(first(),'料理が好き');
+  el('memory-sort').value='frequency';el('memory-sort').listeners.change();
+  el('refresh').listeners.click();
+  assert.equal(el('memory-sort').disabled,true);
+  el('memory-sort').listeners.change();
+  assert.doesNotMatch(el('memories').children[0].textContent,/記憶3/,'cleared records cannot reappear while loading');
+  requests[1].resolve({data:{...sample('target'),memories}});await tick();
+  assert.equal(el('memory-sort').value,'frequency');
+  assert.equal(first(),'記憶3');
+});
+
+test('empty and legacy memory results remain readable without inventing category or frequency',async () => {
+  const {el,requests,submit}=await setup();
+  el('target-login-id').value='target';submit();
+  requests[0].resolve({data:sample('target')});await tick();
+  const text=node=>[node.textContent,...node.children.map(text)].join(' ');
+  assert.match(text(el('memories')),/その他.*確認回数未取得/);
+  assert.equal(el('memory-scroll-hint').hidden,true);
+  el('refresh').listeners.click();
+  requests[1].resolve({data:{...sample('target'),memories:[]}});await tick();
+  assert.match(text(el('memories')),/記憶がありません/);
+  assert.equal(el('memory-sort').disabled,true);
+  assert.equal(el('memories').tabIndex,-1);
+});
 
 test('non-admin browser session cannot request data',async () => {
   const {el,requests,healthRequests,submit} = await setup(false);
@@ -64,7 +253,7 @@ test('user switch discards a stale response and renders stored text without HTML
   assert.equal(el('target-uid').textContent,'user-b');
   requests[0].resolve({data:sample('user-a')});await tick();
   assert.equal(el('target-uid').textContent,'user-b');
-  assert.equal(el('memories').children[0].children[0].textContent,'<img src=x onerror=alert(1)>');
+  assert.equal(el('memories').children.find(child=>child.className==='memory').children[0].textContent,'<img src=x onerror=alert(1)>');
 });
 test('logout clears the visible records and invalidates outstanding requests',async () => {
   const {el,requests,submit,tokenListener} = await setup();
@@ -193,7 +382,7 @@ test('Firestore read failure leaves conversation data usable and exposes retry',
   requests[0].resolve({data:sample('target')});await tick();
   healthRequests[0].reject({code:'unavailable'});await tick();
   assert.equal(el('results').hidden,false);
-  assert.equal(el('memories').children.length,1);
+  assert.equal(el('memories').children.filter(child=>child.className==='memory').length,1);
   assert.match(el('physical-note').textContent,/取得できませんでした/);
   assert.equal(el('physical-refresh').disabled,false);
   assert.equal(el('physical').attributes['aria-busy'],'false');
@@ -497,7 +686,7 @@ test('interest details show grounded excerpts safely, preserve legacy memories a
  const registry=state.el('keywords'),text=interestText(registry),nodes=walkInterest(registry);
  assert.match(text,/好きな点.*きっかけ.*経験/);
  assert.match(text,/祖母と始めました.*庭で花を育てました.*昔から花が好きです/);
- assert.match(text,/休止中.*興味の有無とは別/);
+ assert.match(text,/休止中/);
  assert.match(text,/最後に話題に出た日時/);
  assert.equal(nodes.filter(node=>node.textContent===content).length,1);
  assert.doesNotMatch(text,/詳しいエピソードはまだありません|無関係な記憶|表示しない不明な項目|private-conversation-id|private-message-id/);
@@ -513,7 +702,8 @@ test('activity state does not confirm a candidate or hide a paused confirmed int
  const chart=interestText(el('interest-chart')),registry=interestText(el('keywords'));
  assert.match(chart,/釣り.*休止中.*推定中/);
  assert.match(chart,/興味なしの明言あり/);
- assert.match(registry,/読書.*休止中.*料理.*活動中/);
+ assert.match(registry,/読書.*休止中/);
+ assert.match(registry,/料理.*活動中/);
  assert.doesNotMatch(registry,/釣り|映画/);
 });
 test('old or malformed interest details keep the honest empty state and never invent activity',async()=>{
