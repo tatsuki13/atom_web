@@ -6,13 +6,18 @@ const trendSource = (await readFile(new URL('../admin-web/state-trend.js',import
 const topicSource = (await readFile(new URL('../admin-web/topic-genres.js',import.meta.url),'utf8')).replace(/^export /gm,'');
 const interestSource = (await readFile(new URL('../admin-web/interest-registry.js',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'').replace(/^export /gm,'');
 const memorySource = (await readFile(new URL('../admin-web/memory-list.js',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'').replace(/^export /gm,'');
-const source = trendSource + '\n' + topicSource + '\n' + interestSource + '\n' + memorySource + '\n' + (await readFile(new URL('../admin-web/app.js',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'');
+const physicalSource = (await readFile(new URL('../admin-web/physical-history.js',import.meta.url),'utf8')).replace(/^export /gm,'');
+const timelineSource = (await readFile(new URL('../admin-web/physical-timeline.js',import.meta.url),'utf8')).replace(/^export /gm,'');
+const timelineLoaderSource = (await readFile(new URL('../admin-web/physical-timeline-loader.js',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'').replace(/^export /gm,'');
+const source = trendSource + '\n' + topicSource + '\n' + interestSource + '\n' + memorySource + '\n' + physicalSource + '\n' + timelineSource + '\n' + timelineLoaderSource + '\n' + (await readFile(new URL('../admin-web/app.js',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'');
 class Element {
   hidden = false; disabled = false; value = ''; textContent = ''; children = []; attributes = {}; listeners = {};
   style = {values:{},setProperty(key,value){this.values[key]=value;}}; classList = {toggle(){}};
   append(...nodes){this.children.push(...nodes);}
   replaceChildren(...nodes){this.children = nodes;}
   setAttribute(key,value){this.attributes[key] = value;}
+  getAttribute(key){return this.attributes[key] ?? null;}
+  querySelectorAll(selector){return this.children.flatMap(child=>[...(child.tagName===selector ? [child] : []),...child.querySelectorAll(selector)]);}
   addEventListener(name,fn){this.listeners[name] = fn;}
   setCustomValidity(message){this.validationMessage=message;}
   reportValidity(){}
@@ -37,6 +42,7 @@ async function setup(admin = true) {
       assert.equal(name,'adminConversationViewer');
       return data => new Promise((resolve,reject) => requests.push({name,data,resolve,reject}));
     },
+    getDocFromServer:async()=>({exists:()=>false}),doc:(_db,...parts)=>({path:parts.join('/')}),
     getFirestore:()=>({}),collection:(_db,...parts)=>({path:parts.join('/')}),
     where:(field,operator,value)=>({kind:'where',field,operator,value}),
     orderBy:(field,direction)=>({kind:'orderBy',field,direction}),limit:value=>({kind:'limit',value}),
@@ -52,6 +58,104 @@ const sample = uid => ({uid,loginId:uid,date:'2026-10-13',conversationId:'c1',co
   memories:[{content:'<img src=x onerror=alert(1)>'}],interestKeywords:[],emotionState:{positive_affect:.7,anxiety:null},physicalSignals:null});
 const healthSnapshot = (id,data) => ({docs:id ? [{id,data:()=>data}] : []});
 const descendants = node => [node,...node.children.flatMap(descendants)];
+
+test('selected-day intraday charts switch metrics locally and clear on date reload or logout',async()=>{
+  const {el,requests,healthRequests,submit,tokenListener}=await setup();
+  el('target-login-id').value='target';submit();requests[0].resolve({data:sample('target')});await tick();
+  el('physical-date').value='2026-11-09';el('physical-date').listeners.change();
+  const timestamp=time=>({toMillis:()=>Date.parse(time)});
+  healthRequests[1].resolve(healthSnapshot('2026-11-09',{steps:321,timeline:{version:1,
+    steps:[{startAt:timestamp('2026-11-09T00:00:00Z'),endAt:timestamp('2026-11-09T01:00:00Z'),value:321}],
+    sleepStages:[{startAt:timestamp('2026-11-08T14:00:00Z'),endAt:timestamp('2026-11-08T15:00:00Z'),stage:'rem'}],
+  }}));await tick();
+  assert.ok(descendants(el('physical-timeline')).some(node=>/09:00.*321歩/.test(node.attributes['aria-label']??'')));
+  el('physical-timeline-field').value='sleepStages';el('physical-timeline-field').listeners.change();
+  assert.ok(descendants(el('physical-timeline')).some(node=>/レム睡眠/.test(node.attributes['aria-label']??'')));
+  assert.equal(healthRequests.length,2);
+  const missing=descendants(el('physical-history')).find(node=>node.tagName==='button' && node.textContent==='2026-11-08');
+  missing.listeners.click();
+  assert.match(el('physical-timeline-heading').textContent,/2026-11-08/);
+  assert.equal(descendants(el('physical-timeline')).some(node=>node.tagName==='svg'),false);
+  el('physical-previous').listeners.click();
+  assert.equal(el('physical-timeline').children.length,0);
+  assert.equal(el('physical-timeline').attributes['aria-busy'],'true');
+  await tokenListener(null);
+  healthRequests[2].resolve(healthSnapshot('2026-11-08',{timeline:{version:1}}));await tick();
+  assert.equal(el('physical-timeline').children.length,0);
+  assert.equal(el('physical-timeline').attributes['aria-busy'],'false');
+});
+
+test('body tab participates in keyboard navigation and hides the memory sort control',async()=>{
+  const {el}=await setup();
+  el('memory-tab').listeners.keydown({key:'ArrowRight',preventDefault(){}});
+  assert.equal(el('body-tab').attributes['aria-selected'],'true');
+  assert.equal(el('body-panel').hidden,false);
+  assert.equal(el('state-panel').hidden,true);
+  assert.equal(el('memory-panel').hidden,true);
+  assert.equal(el('memory-sort-control').hidden,true);
+  assert.equal(el('body-tab').focused,true);
+  el('body-tab').listeners.keydown({key:'ArrowRight',preventDefault(){}});
+  assert.equal(el('state-tab').attributes['aria-selected'],'true');
+  el('state-tab').listeners.keydown({key:'End',preventDefault(){}});
+  assert.equal(el('body-tab').attributes['aria-selected'],'true');
+});
+
+test('body history selects older dates, plots gaps, and changes metrics without network reads',async()=>{
+  const {el,requests,healthRequests,submit}=await setup();
+  el('target-login-id').value='target';submit();requests[0].resolve({data:sample('target')});await tick();
+  el('physical-date').value='2024-03-01';el('physical-date').listeners.change();
+  const snapshot={docs:[
+    {id:'2024-03-01',data:()=>({steps:0,heartRate:80,sleepMinutes:432})},
+    {id:'2024-02-28',data:()=>({steps:1234,heartRate:70})},
+  ]};
+  healthRequests[1].resolve(snapshot);await tick();
+  assert.equal(el('physical').children[0].children[1].textContent,'0歩');
+  assert.match(el('physical-range').textContent,/2024-02-24.*2024-03-01/);
+  el('physical-field').value='heartRate';el('physical-field').listeners.change();
+  assert.equal(healthRequests.length,2,'metric changes use fetched history');
+  const path=descendants(el('physical-history')).find(node=>node.tagName==='path');
+  assert.equal((path.attributes.d.match(/M/g)??[]).length,2,'missing day breaks the heart rate line');
+  assert.equal((path.attributes.d.match(/L/g)??[]).length,0);
+  const button=descendants(el('physical-history')).find(node=>node.tagName==='button' && node.textContent==='2024-02-28');
+  button.listeners.click();
+  assert.equal(el('physical').children[0].children[1].textContent,'1,234歩');
+  assert.match(el('physical-note').textContent,/2024-02-28.*過去の保存データ/);
+  assert.equal(el('physical-date').value,'2024-03-01','selecting a detail retains the graph range');
+  const missing=descendants(el('physical-history')).find(node=>node.tagName==='button' && node.textContent==='2024-02-29');
+  missing.listeners.click();
+  assert.match(el('physical-note').textContent,/未取得/);
+  assert.equal(healthRequests.length,2);
+  const chartPoint=descendants(el('physical-history')).find(node=>node.tagName==='circle');
+  chartPoint.listeners.keydown({key:'Enter',preventDefault(){}});
+  assert.match(el('physical-note').textContent,/最終同期成功/);
+});
+
+test('range navigation uses bounded JST queries, rejects future dates, and discards stale successes and errors',async()=>{
+  const {el,requests,healthRequests,submit}=await setup();
+  el('target-login-id').value='target';submit();requests[0].resolve({data:sample('target')});await tick();
+  el('physical-date').value='2024-03-01';el('physical-date').listeners.change();
+  el('physical-month').listeners.click();
+  const constraints=healthRequests[2].query.constraints;
+  assert.equal(constraints[0].value.toISOString(),'2024-01-31T15:00:00.000Z');
+  assert.equal(constraints[1].value.toISOString(),'2024-03-01T15:00:00.000Z');
+  assert.equal(constraints[3].value,30);
+  healthRequests[0].reject({code:'permission-denied'});await tick();
+  assert.equal(el('physical').attributes['aria-busy'],'true');
+  healthRequests[2].resolve(healthSnapshot('2024-03-01',{steps:99}));await tick();
+  healthRequests[1].resolve(healthSnapshot('2024-03-01',{steps:500}));await tick();
+  assert.equal(el('physical').children[0].children[1].textContent,'99歩');
+  assert.equal(el('physical').attributes['aria-busy'],'false');
+  assert.equal(descendants(el('physical-history')).filter(node=>node.tagName==='tbody')[0].children.length,30);
+  el('physical-previous').listeners.click();assert.equal(el('physical-date').value,'2024-02-29');
+  el('physical-next').listeners.click();assert.equal(el('physical-date').value,'2024-03-01');
+  const count=healthRequests.length;
+  el('physical-date').value='2999-01-01';el('physical-date').listeners.change();
+  assert.equal(healthRequests.length,count);
+  assert.equal(el('physical-date').value,'2024-03-01');
+  el('physical-today').listeners.click();
+  assert.equal(healthRequests.at(-1).query.constraints[3].value,1);
+  assert.equal(el('physical-next').disabled,true);
+});
 
 test('record editing alone allows gear corrections, cancellation and confirmed deletion',async()=>{
   const {el,requests,submit}=await setup();
@@ -338,27 +442,29 @@ test('health data reads Firestore by resolved UID and preserves zero, missing fi
   }).format(new Date());
   const tomorrow=new Date(`${today}T00:00:00+09:00`);
   tomorrow.setUTCDate(tomorrow.getUTCDate()+1);
+  const start = new Date(`${today}T00:00:00+09:00`); start.setUTCDate(start.getUTCDate()-6);
   assert.deepEqual(constraints,[
+    {kind:'where',field:'date',operator:'>=',value:start},
     {kind:'where',field:'date',operator:'<',value:tomorrow},
-    {kind:'orderBy',field:'date',direction:'desc'}, {kind:'limit',value:1},
+    {kind:'orderBy',field:'date',direction:'desc'}, {kind:'limit',value:7},
   ]);
   assert.equal(el('physical').attributes['aria-busy'],'true');
-  healthRequests[0].resolve(healthSnapshot('2000-01-01',{
+  healthRequests[0].resolve(healthSnapshot(today,{
     steps:0,sleepMinutes:0,heartRate:80.5,restingHeartRate:null,
     updatedAt:{toDate:()=>new Date('2000-01-01T01:00:00Z')},
   }));await tick();
   const rows=el('physical').children.map(node=>node.children.map(child=>child.textContent));
-  assert.deepEqual(rows,[['歩数','0歩'],['睡眠時間','0時間0分'],['通常心拍数（当日平均）','80.5 bpm'],['安静時心拍数（当日平均）','データなし']]);
-  assert.match(el('physical-note').textContent,/2000-01-01.*過去の保存データ/);
+  assert.deepEqual(rows,[['歩数','0歩'],['睡眠時間','0時間0分'],['通常心拍数（当日平均）','80.5 bpm'],['安静時心拍数（当日平均）','未取得']]);
+  assert.ok(el('physical-note').textContent.includes(today));
   assert.match(el('physical-note').textContent,/最終同期成功/);
   assert.ok(el('physical-note').textContent.includes(new Date('2000-01-01T01:00:00Z').toLocaleString('ja-JP',{timeZone:'Asia/Tokyo'})));
-  assert.match(el('physical-note').textContent,/今日のデータはまだ同期/);
+  assert.match(el('physical-note').textContent,/（今日）/);
   assert.equal(el('physical-refresh').disabled,false);
   el('physical-refresh').listeners.click();
   assert.equal(healthRequests.length,2);
   healthRequests[1].resolve(healthSnapshot(null));await tick();
-  assert.equal(el('physical').children[0].children[1].textContent,'データなし');
-  assert.match(el('physical-note').textContent,/同期済みの身体データはありません/);
+  assert.equal(el('physical').children[0].children[1].textContent,'未取得');
+  assert.match(el('physical-note').textContent,/この日の身体データは未取得/);
 });
 
 test('health responses cannot leak across user changes or logout',async()=>{
@@ -393,8 +499,8 @@ test('health reads use the Firebase UID instead of the login ID',async()=>{
   el('target-login-id').value='target';submit();
   requests[0].resolve({data:{...sample('resolved-uid'),loginId:'target'}});await tick();
   assert.equal(healthRequests[0].query.target.path,'users/resolved-uid/health_daily');
-  healthRequests[0].resolve(healthSnapshot('2000-01-01',{heartRate:75}));await tick();
-  assert.equal(el('physical').children[0].children[1].textContent,'データなし');
+  healthRequests[0].resolve(healthSnapshot(el('physical-date').value,{heartRate:75}));await tick();
+  assert.equal(el('physical').children[0].children[1].textContent,'未取得');
   assert.equal(el('physical').children[2].children[1].textContent,'75 bpm');
 });
 
@@ -755,4 +861,57 @@ test('quadrant coordinates honor explicit preferences and leave invalid or missi
  assert.equal(position({interestScore:.6,spontaneityScore:0},'spontaneity').x,0);
  assert.equal(position({interestScore:.6,spontaneityScore:NaN},'spontaneity').x,null);
  assert.equal(position({interestScore:.6,spontaneityScore:2},'spontaneity').x,null);
+});
+
+
+test('Android chunked timeline renders after daily totals and metric changes reuse the downloaded data',async()=>{
+  const {el,requests,healthRequests,submit,context}=await setup();
+  const reads=[];
+  context.getDocFromServer=ref=>new Promise((resolve,reject)=>reads.push({path:ref.path,resolve,reject}));
+  el('target-login-id').value='target';submit();requests[0].resolve({data:sample('target')});await tick();
+  el('physical-date').value='2026-11-09';el('physical-date').listeners.change();
+  healthRequests[1].resolve(healthSnapshot('2026-11-09',{steps:350}));await tick();
+  assert.equal(el('physical').children[0].children[1].textContent,'350歩');
+  assert.equal(el('physical-timeline').attributes['aria-busy'],'true');
+  assert.equal(reads[0].path,'users/target/health_timeline/2026-11-09');
+  const at=time=>({toMillis:()=>Date.parse(time)});
+  const metadata={schemaVersion:2,revision:'published',chunkPrefix:'published_',chunkCount:1,recordCount:4,endAt:at('2026-11-09T15:00:00Z')};
+  const snapshot=data=>({exists:()=>true,data:()=>data});
+  reads[0].resolve(snapshot(metadata));await tick();
+  assert.equal(reads[1].path,'users/target/health_timeline/2026-11-09/chunks/published_0000');
+  reads[1].resolve(snapshot({index:0,revision:'published',records:[
+    {type:'steps',startAt:at('2026-11-09T00:00:00Z'),endAt:at('2026-11-09T00:15:00Z'),value:100},
+    {type:'steps',startAt:at('2026-11-09T00:15:00Z'),endAt:at('2026-11-09T00:30:00Z'),value:250},
+    {type:'heartRate',recordId:'same-parent',startAt:at('2026-11-09T00:00:00Z'),endAt:at('2026-11-09T00:00:00Z'),value:60},
+    {type:'heartRate',recordId:'same-parent',startAt:at('2026-11-09T00:01:00Z'),endAt:at('2026-11-09T00:01:00Z'),value:100},
+  ]}));await tick();
+  reads[2].resolve(snapshot(metadata));await tick();
+  assert.ok(descendants(el('physical-timeline')).some(node=>/09:00.*350歩/.test(node.attributes['aria-label']??'')));
+  el('physical-timeline-field').value='heartRate';el('physical-timeline-field').listeners.change();
+  assert.ok(descendants(el('physical-timeline')).some(node=>/平均 80.*最小 60.*最大 100.*2回測定/.test(node.attributes['aria-label']??'')));
+  assert.equal(reads.length,3);
+  assert.equal(el('physical-timeline').attributes['aria-busy'],'false');
+});
+test('timeline permission error retains daily totals and does not advise reinstalling the Android app',async()=>{
+  const {el,requests,healthRequests,submit,context}=await setup();
+  context.getDocFromServer=async()=>{throw {code:'permission-denied'};};
+  el('target-login-id').value='target';submit();requests[0].resolve({data:sample('target')});await tick();
+  healthRequests[0].resolve(healthSnapshot(el('physical-date').value,{steps:350}));await tick();
+  assert.equal(el('physical').children[0].children[1].textContent,'350歩');
+  const text=descendants(el('physical-timeline')).map(node=>node.textContent).join(' ');
+  assert.match(text,/時刻別データの読み取り権限/);
+  assert.doesNotMatch(text,/Androidアプリを更新/);
+  assert.equal(el('physical-timeline').attributes['aria-busy'],'false');
+});
+test('logout discards a pending timeline response and prevents follow-up chunk reads',async()=>{
+  const {el,requests,healthRequests,submit,context,tokenListener}=await setup();
+  const reads=[];
+  context.getDocFromServer=ref=>new Promise(resolve=>reads.push({path:ref.path,resolve}));
+  el('target-login-id').value='target';submit();requests[0].resolve({data:sample('target')});await tick();
+  healthRequests[0].resolve(healthSnapshot('2026-11-09',{steps:350}));await tick();
+  assert.equal(reads.length,1);
+  await tokenListener(null);
+  reads[0].resolve({exists:()=>true,data:()=>({schemaVersion:2,chunkCount:1})});await tick();
+  assert.equal(reads.length,1);
+  assert.equal(el('physical-timeline').children.length,0);
 });

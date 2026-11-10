@@ -66,7 +66,7 @@ button.secondary:hover { background: #f2f6f3; }
 .view-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin: 24px 0 20px; }
 .view-controls .tabs { margin: 0; }
 #memory-sort { width: 128px; min-height: 44px; padding: 10px 12px; font-size: 14px; border-color: #d5dfd8; }
-.state-layout { display: grid; grid-template-columns: minmax(0, 1fr) 230px; gap: 20px; align-items: start; }
+.state-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; align-items: start; }
 .state-card { min-width: 0; }
 .conversation-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding-bottom: 22px; margin-bottom: 24px; border-bottom: 1px solid var(--border); }
 .conversation-toolbar label { margin: 0; }
@@ -81,6 +81,49 @@ button.secondary:hover { background: #f2f6f3; }
 .physical-card #physical-note { white-space: pre-line; }
 .physical-card #physical-refresh { margin-top: 14px; width: 100%; }
 .physical-help { margin-top: 12px; }
+.physical-toolbar, .physical-periods, .physical-date-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.physical-toolbar { justify-content: space-between; margin-bottom: 16px; padding: 18px 20px; }
+.physical-date-controls label { margin: 0; }
+.physical-date-controls input { width: 164px; }
+.physical-periods button[aria-pressed=true] { background: var(--green); color: #fff; border-color: var(--green); }
+#body-panel .physical-card .metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; }
+#body-panel .physical-card .metric { padding: 16px; border: 1px solid var(--border); border-radius: 10px; background: #f8faf9; }
+#body-panel #physical-refresh { width: auto; }
+.physical-history-card { margin-top: 16px; }
+.physical-timeline-card { margin-top: 16px; }
+.physical-timeline-card .section-heading { flex-wrap: wrap; margin-bottom: 16px; }
+.physical-timeline-card h2 { font-size: 16px; }
+#physical-timeline-field { width: 180px; }
+#physical-timeline svg { width: 100%; height: auto; display: block; max-height: 360px; }
+.physical-timeline-plot { overflow-x: auto; }
+.physical-timeline-plot svg { min-width: 700px; }
+#physical-timeline svg [role=button] { cursor: pointer; }
+#physical-timeline svg [role=button]:focus-visible { stroke: #253a34; stroke-width: 3; }
+.physical-timeline-selection { padding: 12px 16px; border-radius: 8px; background: #edf5ef; font-size: 13px; min-height: 48px; }
+.physical-timeline-empty { padding: 20px; margin-top: 16px; background: #f3f7f4; border-radius: 8px; font-size: 13px; color: var(--muted); }
+#physical-field { max-width: 180px; }
+#physical-range { margin-top: 12px; }
+#physical-history svg { width: 100%; height: auto; display: block; max-height: 360px; }
+#physical-history svg [role=button] { cursor: pointer; }
+#physical-history svg [role=button]:focus-visible { stroke: #253a34; stroke-width: 3; }
+.physical-table-scroll { overflow: auto; max-height: 420px; margin-top: 18px; }
+.physical-table { width: 100%; border-collapse: collapse; font-size: 13px; white-space: nowrap; }
+.physical-table th, .physical-table td { padding: 10px 14px; border-bottom: 1px solid var(--border); text-align: left; font-variant-numeric: tabular-nums; }
+.physical-table thead th { position: sticky; top: 0; background: #f3f7f4; z-index: 1; }
+.physical-table tr[aria-selected=true] { background: #edf5ef; }
+.physical-table button[aria-pressed=true] { border-color: var(--green); color: var(--green); }
+@media (max-width: 900px) {
+  #body-panel .physical-card .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .physical-toolbar { padding: 14px; }
+  .physical-date-controls { gap: 8px; width: 100%; }
+  .physical-date-controls label { width: 100%; order: -1; }
+  .physical-date-controls input { flex: 1; min-width: 0; width: 120px; }
+  .physical-date-controls button { padding: 10px 12px; }
+  #body-panel .physical-card .metric { padding: 12px; }
+  #physical-field { max-width: 142px; }
+}
 .section-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .trend-meta { font-size: 12px; color: var(--muted); white-space: nowrap; }
 .interest-topic { padding: 16px 0; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
