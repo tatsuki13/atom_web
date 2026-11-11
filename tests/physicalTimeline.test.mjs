@@ -101,6 +101,24 @@ test('Android instantaneous heart samples keep every sample within a five minute
   assert.equal(timeline.sources.heartRate,'watch');
   assert.equal(points[1].value,75);
 });
+test('duplicate heart samples cannot change the selected source or its statistics',()=>{
+  for (const type of ['heartRate','restingHeartRate']) {
+    const sample=(sourceName,time,value)=>raw(type,time,time,value,{recordId:'parent',sourceName});
+    const a=sample('A','2026-11-09T00:00:00Z',60);
+    const b=sample('B','2026-11-09T00:01:00Z',90);
+    const c=sample('B','2026-11-09T00:02:00Z',110);
+    const original=convertHealthTimeline([a,b,c],day,meta);
+    assert.equal(original.sources[type],'B');
+    const {value,min,max,count}=original[type][0];
+    assert.deepEqual({value,min,max,count},{value:100,min:90,max:110,count:2});
+    for (const records of [[a,a,b,c],[a,a,a,b,b,c,c],[c,a,b,a,b,c]]) {
+      assert.deepEqual(convertHealthTimeline(records,day,meta),original);
+    }
+    const invalid=sample('A','2026-11-09T00:03:00Z',0);
+    assert.deepEqual(convertHealthTimeline([a,b,c,invalid,invalid,invalid],day,meta),original);
+  }
+});
+
 test('Android sleep preserves prior-night stages and never turns a session into REM',()=>{
   const timeline=convertHealthTimeline([
     raw('sleepSession','2026-11-08T14:00:00Z','2026-11-08T22:00:00Z',null),

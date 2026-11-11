@@ -55,22 +55,27 @@ export function convertHealthTimeline(records, day, metadata) {
     const source=item.type==='steps' ? '' : JSON.stringify([item.sourceName??'',item.sourceId??'']);
     if (!byType.has(item.type)) byType.set(item.type,new Map());
     const sources=byType.get(item.type);
-    if (!sources.has(source)) sources.set(source,[]);
-    sources.get(source).push({...item,from,to});
+    if (!sleep) {
+      const width=item.type==='steps' ? 3600000 : 300000;
+      const bucketStart=start+Math.floor((from-start)/width)*width;
+      const bucketEnd=Math.min(bucketStart+width,end,dayEnd);
+      if (bucketEnd<=bucketStart || (item.type==='steps' && to>bucketEnd)) continue;
+    }
+    if (!sources.has(source)) sources.set(source,new Map());
+    const identity=JSON.stringify([item.recordId??'',from,to,sleep ? item.stage : item.value]);
+    sources.get(source).set(identity,{...item,from,to});
   }
   for (const [type,sources] of byType) {
-    const ranked=[...sources.entries()].sort((a,b)=>b[1].length-a[1].length || a[0].localeCompare(b[0]));
-    const [source,items]=ranked[0];
+    const ranked=[...sources.entries()].sort((a,b)=>b[1].size-a[1].size || a[0].localeCompare(b[0]));
+    if (!ranked.length) continue;
+    const [source,measurements]=ranked[0],items=[...measurements.values()];
     if (source) result.sources[type]=items[0].sourceName || items[0].sourceId || '記録元不明';
     if (type==='sleepStage') {
       result.sleepStages=items.map(item=>({startAt:item.startAt,endAt:item.endAt,stage:Object.hasOwn(sleepStageStyle,item.stage) ? item.stage : 'unknown'}));
       continue;
     }
-    const width=type==='steps' ? 3600000 : 300000,buckets=new Map(),seen=new Set();
+    const width=type==='steps' ? 3600000 : 300000,buckets=new Map();
     for (const item of items) {
-      const identity=JSON.stringify([item.recordId??'',item.from,item.to,item.value]);
-      if(seen.has(identity)) continue;
-      seen.add(identity);
       const bucketStart=start+Math.floor((item.from-start)/width)*width;
       const bucketEnd=Math.min(bucketStart+width,end,dayEnd);
       if(bucketEnd<=bucketStart) continue;

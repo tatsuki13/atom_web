@@ -32,6 +32,7 @@ async function setup(admin = true) {
   const nodes = new Map(), requests = [], healthRequests = [];
   const el = id => {if (!nodes.has(id)) nodes.set(id,new Element());return nodes.get(id);};
   el('results').hidden = true; el('viewer').hidden = true;
+  el('body-panel').hidden = true;
   let tokenListener;
   const context = {
     innerWidth:1280,innerHeight:900,addEventListener(){},
@@ -61,6 +62,7 @@ const descendants = node => [node,...node.children.flatMap(descendants)];
 
 test('selected-day intraday charts switch metrics locally and clear on date reload or logout',async()=>{
   const {el,requests,healthRequests,submit,tokenListener}=await setup();
+  el('body-tab').listeners.click();
   el('target-login-id').value='target';submit();requests[0].resolve({data:sample('target')});await tick();
   el('physical-date').value='2026-11-09';el('physical-date').listeners.change();
   const timestamp=time=>({toMillis:()=>Date.parse(time)});
@@ -866,6 +868,7 @@ test('quadrant coordinates honor explicit preferences and leave invalid or missi
 
 test('Android chunked timeline renders after daily totals and metric changes reuse the downloaded data',async()=>{
   const {el,requests,healthRequests,submit,context}=await setup();
+  el('body-tab').listeners.click();
   const reads=[];
   context.getDocFromServer=ref=>new Promise((resolve,reject)=>reads.push({path:ref.path,resolve,reject}));
   el('target-login-id').value='target';submit();requests[0].resolve({data:sample('target')});await tick();
@@ -892,8 +895,62 @@ test('Android chunked timeline renders after daily totals and metric changes reu
   assert.equal(reads.length,3);
   assert.equal(el('physical-timeline').attributes['aria-busy'],'false');
 });
+test('timeline reads wait for the body tab and reuse cached days until explicit refresh',async()=>{
+  const {el,requests,healthRequests,submit,context}=await setup();
+  const reads=[];
+  const snapshot=data=>({exists:()=>true,data:()=>data});
+  context.getDocFromServer=async ref=>{
+    reads.push(ref.path);
+    await tick();
+    const parts=ref.path.split('/'),day=parts[3];
+    const at=time=>({toMillis:()=>Date.parse(`${day}T${time}+09:00`)});
+    if (parts.length===4) return snapshot({schemaVersion:2,revision:'a',chunkPrefix:'a_',
+      chunkCount:2,recordCount:2,endAt:at('23:59:00')});
+    const index=Number(parts.at(-1).slice(2));
+    return snapshot({index,revision:'a',records:[{type:'heartRate',recordId:String(index),
+      startAt:at('09:00:00'),endAt:at('09:00:00'),value:80+index*20}]});
+  };
+  const settle=async()=>{for(let i=0;i<8;i++) await tick();};
+  el('target-login-id').value='target';submit();requests[0].resolve({data:sample('target')});await tick();
+  const day=el('physical-date').value;
+  healthRequests[0].resolve(healthSnapshot(day,{heartRate:90}));await settle();
+  assert.equal(el('body-panel').hidden,true);
+  assert.equal(reads.length,0,'hidden body tab must not read timeline metadata or chunks');
+  el('conversation').listeners.change({target:{value:'c2'}});
+  requests[1].resolve({data:{...sample('target'),conversationId:'c2'}});await tick();
+  healthRequests[1].resolve(healthSnapshot(day,{heartRate:90}));await settle();
+  assert.equal(reads.length,0,'conversation changes must not fetch hidden detail');
+
+  el('body-tab').listeners.click();
+  assert.equal(reads.length,1);
+  el('physical-field').value='heartRate';el('physical-field').listeners.change();
+  el('physical-timeline-field').value='heartRate';el('physical-timeline-field').listeners.change();
+  el('body-tab').listeners.click();
+  assert.equal(reads.length,1,'redraws must share the in-flight request');
+  await settle();
+  assert.equal(reads.length,4,'two chunks require metadata, two chunks, and a revision check');
+  assert.ok(descendants(el('physical-timeline')).some(node=>/平均 90/.test(node.attributes['aria-label']??'')));
+  el('physical-timeline-field').value='steps';el('physical-timeline-field').listeners.change();
+  el('physical-field').value='steps';el('physical-field').listeners.change();
+  el('state-tab').listeners.click();el('body-tab').listeners.click();await settle();
+  assert.equal(reads.length,4,'metric changes and reopening reuse the downloaded day');
+
+  const previous=descendants(el('physical-history')).find(node=>node.tagName==='button' && node.textContent!==day);
+  previous.listeners.click();await settle();
+  assert.equal(reads.length,8,'selecting an uncached day fetches its detail');
+  descendants(el('physical-history')).find(node=>node.tagName==='button' && node.textContent===day).listeners.click();
+  await settle();assert.equal(reads.length,8,'returning to a cached day performs no reads');
+  el('physical-week').listeners.click();
+  healthRequests[2].resolve(healthSnapshot(day,{heartRate:90}));await settle();
+  assert.equal(reads.length,8,'reloading the daily range retains the timeline cache');
+  el('physical-refresh').listeners.click();
+  healthRequests[3].resolve(healthSnapshot(day,{heartRate:90}));await settle();
+  assert.equal(reads.length,12,'explicit refresh reloads the selected timeline');
+});
+
 test('timeline permission error retains daily totals and does not advise reinstalling the Android app',async()=>{
   const {el,requests,healthRequests,submit,context}=await setup();
+  el('body-tab').listeners.click();
   context.getDocFromServer=async()=>{throw {code:'permission-denied'};};
   el('target-login-id').value='target';submit();requests[0].resolve({data:sample('target')});await tick();
   healthRequests[0].resolve(healthSnapshot(el('physical-date').value,{steps:350}));await tick();
@@ -905,6 +962,7 @@ test('timeline permission error retains daily totals and does not advise reinsta
 });
 test('logout discards a pending timeline response and prevents follow-up chunk reads',async()=>{
   const {el,requests,healthRequests,submit,context,tokenListener}=await setup();
+  el('body-tab').listeners.click();
   const reads=[];
   context.getDocFromServer=ref=>new Promise(resolve=>reads.push({path:ref.path,resolve}));
   el('target-login-id').value='target';submit();requests[0].resolve({data:sample('target')});await tick();
