@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {chronologicalPoints,trendGeometry,trendWindow,score,axisLabel,estimateOrigin} from '../admin-web/src/state-trend.ts';
+import {chronologicalPoints,trendGeometry,trendWindow,score,axisLabel,estimateOrigin,withHeldScores} from '../admin-web/src/state-trend.ts';
 const point = (id,value,conversationId='c') => ({id,conversationId,createdAt:`2026-10-13T00:0${id}:00Z`,emotionState:{interest:value}});
 test('history sorts chronologically without mutating input or reordering tied and unknown dates',()=>{
   const points=[point('2',.5),{...point('missing',.5),createdAt:null},point('0',.5),{...point('invalid',.5),createdAt:'invalid'},point('1',.5),{...point('tie',.5),createdAt:point('1',.5).createdAt}];
@@ -83,4 +83,52 @@ test('held values trace stored links to an earlier estimate in the same conversa
   assert.equal(estimateOrigin([state('a','held','b'),state('b','held','a')],1,'interest'),null,'cycles cannot follow future messages');
   assert.equal(estimateOrigin([state('a','unestimated')],0,'interest'),null);
   assert.equal(estimateOrigin([state('a','held')],0,'interest'),null);
+});
+
+const evidencePoint=(id,minute,value,reason='insufficient_evidence',source='openai',conversationId='c')=>({
+  id,conversationId,createdAt:new Date(Date.UTC(2026,10,10,0,minute)).toISOString(),
+  emotionState:{energy:value,_analysis:{version:'context-v4',source,axes:{energy:{status:value===null?'unestimated':'estimated',reason:value===null?reason:'estimated',previousMessageId:null}}}},
+});
+test('display holds real estimates through insufficient evidence, preserving zero and original provenance',()=>{
+  const raw=[evidencePoint('initial',0,null),evidencePoint('origin',1,0),evidencePoint('gap',2,null),evidencePoint('gap2',3,null),evidencePoint('changed',4,-.75)];
+  const before=JSON.stringify(raw), points=withHeldScores(raw);
+  assert.equal(score(points[0],'energy'),null);
+  assert.equal(score(points[2],'energy'),0);
+  assert.equal(score(points[3],'energy'),0);
+  assert.deepEqual(points[2].displayHeldAxes,['energy']);
+  assert.equal(estimateOrigin(points,3,'energy'),raw[1]);
+  assert.equal(score(points[4],'energy'),-.75);
+  assert.equal((trendGeometry(points,'energy').path.match(/L/g)??[]).length,3);
+  assert.equal(JSON.stringify(raw),before,'display continuity must not mutate stored data');
+});
+test('display connects triangles beyond thirty minutes until a new estimate arrives',()=>{
+  const points=withHeldScores([evidencePoint('origin',0,.5),evidencePoint('held',20,null),evidencePoint('later',31,null),evidencePoint('muchLater',180,null),evidencePoint('new',181,-.5),evidencePoint('afterNew',240,null)]);
+  assert.equal(score(points[2],'energy'),.5);
+  assert.equal(score(points[3],'energy'),.5);
+  assert.equal(score(points[5],'energy'),-.5);
+  assert.equal(estimateOrigin(points,1,'energy'),points[0]);
+  assert.equal(estimateOrigin(points,3,'energy'),points[0]);
+  assert.equal(estimateOrigin(points,5,'energy'),points[4]);
+  const path=trendGeometry(points,'energy').path;
+  assert.equal((path.match(/M/g)??[]).length,1);
+  assert.equal((path.match(/L/g)??[]).length,5);
+});
+test('errors and pending analysis hold the last value while keeping the reason and original source',()=>{
+  for(const [reason,source] of [['api_error','error'],['api_unavailable','unavailable']]) {
+    const points=withHeldScores([evidencePoint('origin',0,.5),evidencePoint('gap',1,null,reason,source)]);
+    assert.equal(score(points[1],'energy'),.5);
+    assert.equal(points[1].emotionState._analysis.axes.energy.status,'held');
+    assert.equal(points[1].emotionState._analysis.axes.energy.reason,reason);
+    assert.equal(points[1].emotionState._analysis.source,source);
+    assert.equal(estimateOrigin(points,1,'energy'),points[0]);
+    assert.match(trendGeometry(points,'energy').path,/L/);
+  }
+});
+test('display never fills before the first value, safety responses, unknown timestamps or another conversation',()=>{
+  assert.equal(score(withHeldScores([evidencePoint('initial',0,null,'api_error','error')])[0],'energy'),null);
+  const safety=withHeldScores([evidencePoint('origin',0,.5),evidencePoint('safety',1,null,'safety_skipped','skipped'),evidencePoint('after',2,null)]);
+  assert.equal(score(safety[1],'energy'),null);
+  assert.equal(score(safety[2],'energy'),null,'safety events clear earlier anchors');
+  assert.equal(score(withHeldScores([evidencePoint('origin',0,.5),evidencePoint('other',1,null,'insufficient_evidence','openai','other')])[1],'energy'),null);
+  assert.equal(score(withHeldScores([evidencePoint('origin',0,.5),{...evidencePoint('undated',1,null),createdAt:null}])[1],'energy'),null);
 });

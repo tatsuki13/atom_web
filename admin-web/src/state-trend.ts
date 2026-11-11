@@ -9,8 +9,8 @@ export const dimensions = [
   {key:'motivation',label:'行動への意欲',color:'#777fb0',low:'全くしたくない',high:'非常にしたい'},
 ] as const;
 type AxisKey = typeof dimensions[number]['key'];
-export type TrendPoint = {id:string; conversationId:string; createdAt:string|null; emotionState: Record<string,unknown>|null;content?:string|null};
-type Analysis = {version?:string;axes?:Record<string,{status?:string;reason?:string;previousMessageId?:string|null}>};
+export type TrendPoint = {id:string; conversationId:string; createdAt:string|null; emotionState: Record<string,unknown>|null;content?:string|null;displayHeldAxes?:AxisKey[]};
+type Analysis = {version?:string;source?:string;axes?:Record<string,{status?:string;reason?:string;previousMessageId?:string|null}>};
 const analysis = (point:TrendPoint|undefined) => point?.emotionState?._analysis as Analysis | undefined;
 const originalAxes = new Set<string>(['loneliness','anxiety','positive_affect','interest']);
 export function score(point: TrendPoint | undefined, key: AxisKey): number | null {
@@ -42,6 +42,34 @@ export function chronologicalPoints(points:TrendPoint[]):TrendPoint[] {
   };
   // Stable sort preserves API order for equal or unavailable timestamps.
   return [...points].sort((a,b)=>(timestamp(a)-timestamp(b)) || 0);
+}
+// Carry the last available value within a conversation, without making it a new estimate.
+export function withHeldScores(points:TrendPoint[]):TrendPoint[] {
+  const origins = new Map<AxisKey,{point:TrendPoint;value:number;time:number}>();
+  let conversationId:string|undefined;
+  return points.map(point=>{
+    const metadata=analysis(point), time=point.createdAt ? Date.parse(point.createdAt) : NaN;
+    if(point.conversationId!==conversationId || metadata?.source==='skipped') origins.clear();
+    conversationId=point.conversationId;
+    let result=point;
+    for(const {key} of dimensions) {
+      const axis=metadata?.axes?.[key], value=score(point,key);
+      if(value!==null && (axis?.status==='estimated' || axis?.status==='held') && metadata?.source==='openai' && Number.isFinite(time)) {
+        origins.set(key,{point,value,time});
+        continue;
+      }
+      const origin=origins.get(key);
+      if(!origin || !Number.isFinite(time) || time<origin.time) continue;
+      if(!metadata || point.emotionState?.[key]!==null || !['context-v3','context-v4'].includes(metadata.version ?? '') ||
+        !['openai','error','unavailable'].includes(metadata?.source ?? '') || axis?.status!=='unestimated' ||
+        !['insufficient_evidence','api_error','api_unavailable'].includes(axis.reason ?? '')) continue;
+      if(result===point) result={...point,emotionState:{...point.emotionState,_analysis:{...metadata,axes:{...metadata.axes}}},displayHeldAxes:[]};
+      result.emotionState![key]=origin.value;
+      analysis(result)!.axes![key]={status:'held',reason:axis.reason,previousMessageId:origin.point.id};
+      result.displayHeldAxes!.push(key);
+    }
+    return result;
+  });
 }
 function trendPositions(total:number) {
   return Array.from({length:total},(_,i)=>total>1 ? 46+i/(total-1)*560 : 326);
@@ -100,7 +128,7 @@ export function renderStateTrend(container:HTMLElement, input:TrendPoint[]|undef
   title.append(html('h2','状態の推移'));
   container.append(title);
   if(input === undefined) {container.append(html('p','履歴を取得できませんでした。','muted small'));return;}
-  const points = chronologicalPoints(input);
+  const points = withHeldScores(chronologicalPoints(input));
   if(!points.length){container.append(html('p','この会話には状態の記録がありません。','muted small'));return;}
   if(truncated) container.append(html('p','直近500メッセージの履歴を表示','muted small'));
   title.append(html('span',`${points.length}発話 · 発話順`,'trend-meta'));
@@ -147,7 +175,7 @@ export function renderStateTrend(container:HTMLElement, input:TrendPoint[]|undef
       if(key === 'interest') continue;
       const currentScore = score(selected,key), previousScore = score(previous,key);
       const delta = previous?.conversationId === selected.conversationId && currentScore !== null && previousScore !== null ? currentScore-previousScore : null;
-      const stateLabel = html('p',currentScore === null ? '未推定' : axisLabel(selected,key).startsWith('▲') ? '▲ 前回値を維持' : axisLabel(selected,key),'muted small');
+      const stateLabel = html('p',currentScore !== null && axisLabel(selected,key).startsWith('▲') && !selected.displayHeldAxes?.includes(key) ? '▲ 前回値を維持' : axisLabel(selected,key),'muted small');
       stateLabel.title = axisLabel(selected,key);
       const comparison = html('div',undefined,'trend-chart-meta');
       comparison.append(stateLabel,html('span',`前回比 ${delta === null ? '—' : `${delta>0 ? '+' : ''}${delta.toFixed(2)}`}`));
@@ -178,6 +206,7 @@ export function renderStateTrend(container:HTMLElement, input:TrendPoint[]|undef
         graph.append(marker);
       });
       card.append(graph);
+      if(!visiblePoints.some(point=>score(point,key)!==null)) card.append(html('p','この表示範囲には推定値がありません。未推定を0として描画することはありません。','muted small'));
       const dates = html('div',undefined,'trend-dates');dates.append(html('span',`発話${window.start+1} · ${shortDate(visiblePoints[0].createdAt)}`),html('span',`発話${window.end} · ${shortDate(visiblePoints[visiblePoints.length-1].createdAt)}`));card.append(dates,comparison);charts.append(card);
     }
     if(activeAxis && popupAnchor) showPopup(activeAxis,popupAnchor);
@@ -199,7 +228,7 @@ export function renderStateTrend(container:HTMLElement, input:TrendPoint[]|undef
     body.append(html('h4',held ? 'この時の発言' : '推定時の発言'));
     body.append(html('blockquote',point.content || 'この発言の本文は取得できませんでした。','popover-utterance'));
     if(held) {
-      body.append(html('p','この発話では更新せず、前回の推定値を維持しています。','muted small'));
+      body.append(html('p',point.displayHeldAxes?.includes(key) ? 'この発話では新しい推定値が得られていないため、同じ会話の前回値を表示しています。保存された値は未推定のままです。' : 'この発話では更新せず、前回の推定値を維持しています。','muted small'));
       const origin=estimateOrigin(points,index,key);
       body.append(html('h4','値の元になった発言'));
       if(origin) {
@@ -218,9 +247,10 @@ export function renderStateTrend(container:HTMLElement, input:TrendPoint[]|undef
     popup.style.setProperty('--arrow-left',`${Math.max(18,Math.min(target.left+target.width/2-left,box.width-18))}px`);
   }
   const legend = html('div',undefined,'trend-legend');
-  legend.append(html('span','● 推定　▲ 前回値を維持 · 点をクリックすると発言を表示'));
+  legend.append(html('span','● この発話の推定　▲ 前回値を表示 · 点をクリックすると発言を表示'));
   const help = html('details',undefined,'trend-help');
   help.append(html('summary','表示について'),html('p','各軸は−1〜＋1、0.25刻みの9段階が基準です。0は快・不快では中立、それ以外では中程度を表します。負の値が悪い状態を意味するとは限りません。未推定の初期値0は表示せず、線を途切れさせます。▲は前回値の維持、前回比は直前の発話との差です。旧形式の0〜1の値は−1〜＋1へ換算し、最も近い0.25刻みに丸めています（旧形式でも快・不快は符号を維持）。符号付きの記録は元の値を表示します。軸は互いに独立し、診断や気持ちの断定ではありません。'));
+  help.append(html('p','新しい推定値がない発話は、同じ会話の前回値を▲で表示し、線をつなぎます。時間による打ち切りはありません。判断材料不足・APIエラー・推定未実行の理由は各点の推定状態に表示します。▲から元の推定日時と発言を確認できます。最初の値がない軸、別の会話、安全対応、日時不明では値を補いません。安全対応後はそれ以前の値を引き継ぎません。肯定的感情・不安・孤独感は−1が「感じていない」、0が「中程度」です。'));
   help.append(html('p','全グラフで同じ発話順・表示範囲・選択位置を共有します。横軸は日時順に並べた発話の等間隔で、時間の長さは表しません。同じ日時の発話は取得順、日時未記録の発話は末尾に取得順で表示します。最初は直近30発話を表示します。スライダーや「前へ・次へ」、各グラフの点で発話を選ぶと、全グラフと上の発言本文が一緒に切り替わります。未推定の軸でも、その発話の横軸位置は変わりません。'));
   legend.append(help);
   container.append(detail,charts,legend,popup);update();
