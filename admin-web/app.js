@@ -1,10 +1,14 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js';
 import { getAuth, setPersistence, browserSessionPersistence, signInWithEmailAndPassword, signOut, onIdTokenChanged } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-auth.js';
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-functions.js';
-import { getFirestore, collection, query, where, orderBy, limit, getDocsFromServer } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js';
+import { getFirestore, collection, query, where, orderBy, limit, getDocsFromServer, doc, getDocFromServer } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js';
 import { renderStateTrend, closeStateTrendPopup } from './state-trend.js';
 import { renderInterestRegistry, renderInterestChart } from './interest-registry.js?v=20261030-drafts';
 import { renderMemoryList, fitMemoryList, fitInterestList } from './memory-list.js?v=20261030-drafts';
+
+import { physicalToday, physicalDayOffset, validPhysicalDay, physicalDays, physicalFields, physicalFormatted, renderPhysicalHistory } from './physical-history.js?v=20261109-physical';
+import { renderPhysicalTimeline } from './physical-timeline.js?v=20261110-chart-only';
+import { loadPhysicalTimeline } from './physical-timeline-loader.js?v=20261110-chart-only';
 
 const $ = id => document.getElementById(id);
 let auth, db, load, authorized = false, revision = 0, selectedLoginId = '', selectedConversation = null;
@@ -14,6 +18,106 @@ let visibleInterests = [], genreEditingEnabled = false;
 let recordEditingEnabled = false;
 let recordWritePending = false;
 const recordDrafts = new Map();
+let physicalEnd = physicalToday(), physicalSelected = physicalEnd, physicalPeriod = 7;
+let physicalRecords = [], physicalRequest = 0, physicalTimelineRequest = 0;
+let physicalTimelineLoading = null;
+const physicalTimelines = new Map();
+function syncPhysicalControls() {
+  $('physical-date').value = physicalEnd;
+  $('physical-date').max = physicalToday();
+  $('physical-previous').disabled = physicalEnd <= '2000-01-01';
+  $('physical-next').disabled = physicalEnd >= physicalToday();
+  for (const [id,count] of [['today',1],['week',7],['month',30]]) {
+    $(`physical-${id}`).setAttribute('aria-pressed',String(physicalPeriod === count && (id !== 'today' || physicalEnd === physicalToday())));
+  }
+}
+function resetPhysicalHistory() {
+  physicalRequest++;
+  physicalTimelineRequest++;physicalTimelines.clear();
+  physicalEnd = physicalToday(); physicalSelected = physicalEnd; physicalPeriod = 7; physicalRecords = [];
+  syncPhysicalControls();
+  $('physical-history').replaceChildren();
+  $('physical-timeline').replaceChildren();
+  $('physical-timeline').setAttribute('aria-busy','false');
+  $('physical-timeline-heading').textContent = '時刻別データ';
+  $('physical-history').setAttribute('aria-busy','false');
+  $('physical-range').textContent = '';
+}
+function drawSelectedPhysical() {
+  const day=physicalSelected,uid=$('target-uid').textContent,current=revision,historyRequest=physicalRequest;
+  const selected=physicalRecords.find(item=>item.date===day);
+  const container=$('physical-timeline');
+  renderPhysical({today:physicalToday(),selectedDate:day,physicalSignals:selected});
+  $('physical-timeline-heading').textContent=`${day} の時刻別データ`;
+  if ($('body-panel').hidden) {
+    container.setAttribute('aria-busy','false');
+    return;
+  }
+  const cached=physicalTimelines.get(day);
+  const render=timeline=>{
+    container.setAttribute('aria-busy','false');
+    renderPhysicalTimeline(container,{...selected,timeline},day,$('physical-timeline-field').value || 'steps');
+  };
+  if(physicalTimelines.has(day)) {
+    if(cached.error) {
+      container.setAttribute('aria-busy','false');
+      container.replaceChildren(element('p',cached.error,'physical-timeline-empty'));
+    } else render(cached.timeline);
+    return;
+  }
+  const pending=physicalTimelineLoading;
+  if (pending && pending.day===day && pending.uid===uid && pending.current===current &&
+    pending.historyRequest===historyRequest && pending.request===physicalTimelineRequest) {
+    container.setAttribute('aria-busy','true');
+    return;
+  }
+  const request=++physicalTimelineRequest;
+  const loading={day,uid,current,historyRequest,request};
+  physicalTimelineLoading=loading;
+  container.setAttribute('aria-busy','true');
+  container.replaceChildren(element('p','保存済みの時刻別データを読み込み中…','muted small'));
+  const isCurrent=()=>authorized && revision===current && physicalRequest===historyRequest &&
+    physicalTimelineRequest===request && physicalSelected===day && $('target-uid').textContent===uid;
+  void loadPhysicalTimeline((...parts)=>getDocFromServer(doc(db,...parts)),uid,day,isCurrent).then(timeline=>{
+    if(!isCurrent()) return;
+    physicalTimelines.set(day,{timeline:timeline ?? selected?.timeline});
+    drawSelectedPhysical();
+  }).catch(error=>{
+    if(!isCurrent()) return;
+    const code=error?.code?.replace(/^firestore\//,'');
+    const message=code==='permission-denied'
+      ? '時刻別データの読み取り権限がありません。管理者アカウントとhealth_timeline・chunksのFirestoreルールを確認してください。'
+      : code==='unauthenticated' ? 'ログインし直して時刻別データを再取得してください。'
+        : code==='timeline-unsupported' ? 'この時刻別データの保存形式には対応していません。Webページを更新してください。'
+          : code==='timeline-inconsistent' ? '時刻別データが同期中または一部未取得です。「身体データを更新」で再取得してください。'
+            : '時刻別データを取得できませんでした。通信状態を確認し「身体データを更新」で再試行してください。';
+    physicalTimelines.set(day,{error:message});
+    drawSelectedPhysical();
+  }).finally(()=>{
+    if (physicalTimelineLoading===loading) physicalTimelineLoading=null;
+  });
+}
+function drawPhysicalHistory() {
+  const start = physicalDayOffset(physicalEnd,1-physicalPeriod);
+  $('physical-range').textContent = `${start} 〜 ${physicalEnd}（日本時間）`;
+  drawSelectedPhysical();
+  renderPhysicalHistory($('physical-history'),physicalDays(physicalEnd,physicalPeriod,physicalRecords),
+    $('physical-field').value || 'steps',physicalSelected,day => {
+      physicalSelected = day;
+      drawPhysicalHistory();
+      // Keep keyboard focus on the selected date after rebuilding the table.
+      const buttons = $('physical-history').querySelectorAll('button');
+      for (const button of buttons) if (button.textContent === day) button.focus();
+    });
+}
+function changePhysicalRange(end,period = physicalPeriod) {
+  if (!validPhysicalDay(end) || end < '2000-01-01' || end > physicalToday()) {
+    syncPhysicalControls(); return;
+  }
+  physicalEnd = end; physicalSelected = end; physicalPeriod = period;
+  syncPhysicalControls();
+  void fetchPhysicalData(selectedLoginId);
+}
 
 // A successful write redraws these views. Block edits in all of them until it
 // finishes so that the redraw cannot discard a draft entered during the write.
@@ -43,6 +147,7 @@ const date = value => {
 function status(message = '', error = false) { $('status').textContent = message; $('status').hidden = !message; $('status').classList.toggle('error', error); }
 function resetData() {
   recordDrafts.clear();
+  resetPhysicalHistory();
   closeStateTrendPopup($('state-trend'));
   visibleMemories = [];
   visibleInterests = []; genreEditingEnabled = false;
@@ -167,53 +272,52 @@ if (typeof ResizeObserver !== 'undefined') {
 $('keywords').addEventListener('toggle',fitMemoryPanels,true);
 function renderPhysical(data) {
   const physical = data?.physicalSignals;
-  const value = (number, unit) => typeof number === 'number' && Number.isFinite(number) && number >= 0
-    ? `${number.toLocaleString('ja-JP', {maximumFractionDigits:1})}${unit}` : 'データなし';
-  const sleep = physical?.sleepMinutes;
-  const rows = [
-    ['歩数',value(physical?.steps,'歩')],
-    ['睡眠時間',typeof sleep === 'number' && Number.isFinite(sleep) && sleep >= 0
-      ? `${Math.floor(sleep / 60)}時間${Math.floor(sleep % 60)}分` : 'データなし'],
-    ['通常心拍数（当日平均）',value(physical?.heartRate,' bpm')],
-    ['安静時心拍数（当日平均）',value(physical?.restingHeartRate,' bpm')],
-  ];
-  $('physical').replaceChildren(...rows.map(([label,text])=>{
+  $('physical').replaceChildren(...physicalFields.map(({key,label})=>{
     const node=element('div',null,'metric');
-    node.append(element('small',label),element('strong',text));return node;
+    node.append(element('small',label),element('strong',physicalFormatted(physical?.[key],key)));return node;
   }));
-  $('physical-note').textContent = physical
-    ? `対象日: ${physical.date ?? '不明'}（${physical.date === data.today ? '今日' : '過去の保存データ'}）\n最終同期成功: ${date(physical.recordedAt)}${physical.date === data.today ? '' : '\n今日のデータはまだ同期されていません。'}`
+  $('physical-note').textContent = data?.selectedDate
+    ? `対象日: ${data.selectedDate}（${data.selectedDate === data.today ? '今日' : '過去の保存データ'}）\n${physical ? `最終同期成功: ${date(physical.recordedAt)}` : 'この日の身体データは未取得です。'}`
     : '同期済みの身体データはありません。';
 }
-async function fetchPhysicalData(loginId, current = revision) {
+async function fetchPhysicalData(loginId, current = revision, refreshTimeline = false) {
   const uid = $('target-uid').textContent;
   if (!authorized || !loginId || !uid) return;
+  const request = ++physicalRequest;
+  const end = physicalEnd, count = physicalPeriod;
+  const start = physicalDayOffset(end,1-count);
+  const isCurrent = () => current === revision && authorized && request === physicalRequest && uid === $('target-uid').textContent;
   $('physical-refresh').disabled = true;
   $('physical').setAttribute('aria-busy','true');
+  $('physical-history').setAttribute('aria-busy','true');
+  $('physical-timeline').setAttribute('aria-busy','true');
+  physicalRecords = [];
+  physicalTimelineRequest++;
+  if (refreshTimeline) physicalTimelines.clear();
+  $('physical').replaceChildren();
+  $('physical-history').replaceChildren();
+  $('physical-timeline').replaceChildren();
+  $('physical-range').textContent = `${start} 〜 ${end}（日本時間）`;
   $('physical-note').textContent = '保存済みの身体データを読み込み中…';
   try {
-    const today = new Intl.DateTimeFormat('en-CA', {
-      timeZone:'Asia/Tokyo',year:'numeric',month:'2-digit',day:'2-digit',
-    }).format(new Date());
-    const tomorrow = new Date(`${today}T00:00:00+09:00`);
-    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-    // 検索で解決済みのUIDを使用し、キャッシュではなくサーバーから最新1日分を取得する。
+    // health_daily.date is a Firestore Timestamp. Use JST midnight boundaries.
     const snapshot = await getDocsFromServer(query(
       collection(db,'users',uid,'health_daily'),
-      where('date','<',tomorrow), orderBy('date','desc'), limit(1),
+      where('date','>=',new Date(`${start}T00:00:00+09:00`)),
+      where('date','<',new Date(`${physicalDayOffset(end,1)}T00:00:00+09:00`)),
+      orderBy('date','desc'), limit(count),
     ));
-    if (current !== revision || !authorized || uid !== $('target-uid').textContent) return;
-    const latest = snapshot.docs[0];
-    const data = latest?.data();
-    const recordedAt = data?.updatedAt?.toDate?.();
-    renderPhysical({today, physicalSignals: latest ? {
-      date:latest.id, steps:data.steps, sleepMinutes:data.sleepMinutes,
-      heartRate:data.heartRate, restingHeartRate:data.restingHeartRate,
-      recordedAt:recordedAt instanceof Date && Number.isFinite(recordedAt.getTime())
-        ? recordedAt.toISOString() : null,
-    } : null});
+    if (!isCurrent()) return;
+    physicalRecords = snapshot.docs.filter(doc => validPhysicalDay(doc.id)).map(doc => {
+      const data = doc.data(), recordedAt = data.updatedAt?.toDate?.();
+      return {date:doc.id, steps:data.steps, sleepMinutes:data.sleepMinutes, timeline:data.timeline,
+        heartRate:data.heartRate, restingHeartRate:data.restingHeartRate,
+        recordedAt:recordedAt instanceof Date && Number.isFinite(recordedAt.getTime()) ? recordedAt.toISOString() : null};
+    });
+    drawPhysicalHistory();
   } catch(error) {
-    if (current !== revision || !authorized) return;
+    if (!isCurrent()) return;
+    $('physical-timeline').setAttribute('aria-busy','false');
     renderPhysical(null);
     const code = error?.code?.replace(/^firestore\//,'');
     $('physical-note').textContent = code === 'permission-denied'
@@ -222,9 +326,10 @@ async function fetchPhysicalData(loginId, current = revision) {
         ? 'ログインし直して身体データを再取得してください。'
         : '身体データを取得できませんでした。通信状態を確認して再取得してください。';
   } finally {
-    if (current === revision && authorized) {
+    if (isCurrent()) {
       $('physical-refresh').disabled = false;
       $('physical').setAttribute('aria-busy','false');
+      $('physical-history').setAttribute('aria-busy','false');
     }
   }
 }
@@ -278,19 +383,33 @@ $('logout').addEventListener('click', async () => {
 $('search-form').addEventListener('submit',event => { event.preventDefault(); fetchData($('target-login-id').value.trim(),null); });
 $('target-login-id').addEventListener('input',() => { resetData(); busy(false); status(); });
 $('refresh').addEventListener('click',() => fetchData(selectedLoginId,selectedConversation));
-$('physical-refresh').addEventListener('click',() => fetchPhysicalData(selectedLoginId));
+$('physical-refresh').addEventListener('click',() => fetchPhysicalData(selectedLoginId,revision,true));
+$('physical-date').addEventListener('change',() => changePhysicalRange($('physical-date').value));
+$('physical-previous').addEventListener('click',() => changePhysicalRange(physicalDayOffset(physicalEnd,-1)));
+$('physical-next').addEventListener('click',() => changePhysicalRange(physicalDayOffset(physicalEnd,1)));
+$('physical-today').addEventListener('click',() => changePhysicalRange(physicalToday(),1));
+$('physical-week').addEventListener('click',() => changePhysicalRange(physicalEnd,7));
+$('physical-month').addEventListener('click',() => changePhysicalRange(physicalEnd,30));
+$('physical-field').addEventListener('change',() => {
+  if ($('physical-history').getAttribute('aria-busy') !== 'true' && $('physical-history').children.length) drawPhysicalHistory();
+});
+$('physical-timeline-field').addEventListener('change',() => {
+  if ($('physical-timeline').getAttribute('aria-busy') !== 'true' && $('physical-history').children.length) drawSelectedPhysical();
+});
 $('conversation').addEventListener('change',event => fetchData(selectedLoginId,event.target.value));
 function tab(name) {
   closeStateTrendPopup($('state-trend'));
   $('memory-sort-control').hidden = name !== 'memory';
-  for (const key of ['state','memory']) { const active = key === name; $(`${key}-tab`).setAttribute('aria-selected',String(active)); $(`${key}-tab`).tabIndex = active ? 0 : -1; $(`${key}-panel`).hidden = !active; }
+  for (const key of ['state','memory','body']) { const active = key === name; $(`${key}-tab`).setAttribute('aria-selected',String(active)); $(`${key}-tab`).tabIndex = active ? 0 : -1; $(`${key}-panel`).hidden = !active; }
   if (name === 'memory') fitMemoryPanels();
+  if (name === 'body' && $('physical-history').children.length &&
+    $('physical-history').getAttribute('aria-busy') !== 'true') drawSelectedPhysical();
 }
 globalThis.addEventListener('resize',()=>closeStateTrendPopup($('state-trend')));
 globalThis.addEventListener('scroll',()=>closeStateTrendPopup($('state-trend')));
-for (const name of ['state','memory']) {
+for (const name of ['state','memory','body']) {
   $(`${name}-tab`).addEventListener('click',() => tab(name));
-  $(`${name}-tab`).addEventListener('keydown',event => { if (['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) { event.preventDefault(); const next = event.key === 'Home' ? 'state' : event.key === 'End' ? 'memory' : name === 'state' ? 'memory' : 'state'; tab(next); $(`${next}-tab`).focus(); } });
+  $(`${name}-tab`).addEventListener('keydown',event => { if (['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) { event.preventDefault(); const names = ['state','memory','body']; const next = event.key === 'Home' ? names[0] : event.key === 'End' ? names[2] : names[(names.indexOf(name) + (event.key === 'ArrowRight' ? 1 : 2)) % names.length]; tab(next); $(`${next}-tab`).focus(); } });
 }
 async function initialize() {
   try {

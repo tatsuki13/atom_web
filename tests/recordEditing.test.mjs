@@ -6,7 +6,10 @@ const trendSource = (await readFile(new URL('../admin-web/state-trend.js',import
 const topicSource = (await readFile(new URL('../admin-web/topic-genres.js',import.meta.url),'utf8')).replace(/^export /gm,'');
 const interestSource = (await readFile(new URL('../admin-web/interest-registry.js',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'').replace(/^export /gm,'');
 const memorySource = (await readFile(new URL('../admin-web/memory-list.js',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'').replace(/^export /gm,'');
-const source = trendSource + '\n' + topicSource + '\n' + interestSource + '\n' + memorySource + '\n' + (await readFile(new URL('../admin-web/app.js',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'');
+const physicalSource = (await readFile(new URL('../admin-web/physical-history.js',import.meta.url),'utf8')).replace(/^export /gm,'');
+const timelineSource = (await readFile(new URL('../admin-web/physical-timeline.js',import.meta.url),'utf8')).replace(/^export /gm,'');
+const timelineLoaderSource = (await readFile(new URL('../admin-web/physical-timeline-loader.js',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'').replace(/^export /gm,'');
+const source = trendSource + '\n' + topicSource + '\n' + interestSource + '\n' + memorySource + '\n' + physicalSource + '\n' + timelineSource + '\n' + timelineLoaderSource + '\n' + (await readFile(new URL('../admin-web/app.js',import.meta.url),'utf8')).replace(/^import .*;\r?\n/gm,'');
 class Element {
   hidden = false; inert = false; disabled = false; value = ''; textContent = ''; children = []; attributes = {}; listeners = {};
   style = {values:{},setProperty(key,value){this.values[key]=value;}}; classList = {toggle(){}};
@@ -37,6 +40,7 @@ async function setup(admin = true) {
       assert.equal(name,'adminConversationViewer');
       return data => new Promise((resolve,reject) => requests.push({name,data,resolve,reject}));
     },
+    getDocFromServer:async()=>({exists:()=>false}),doc:(_db,...parts)=>({path:parts.join('/')}),
     getFirestore:()=>({}),collection:(_db,...parts)=>({path:parts.join('/')}),
     where:(field,operator,value)=>({kind:'where',field,operator,value}),
     orderBy:(field,direction)=>({kind:'orderBy',field,direction}),limit:value=>({kind:'limit',value}),
