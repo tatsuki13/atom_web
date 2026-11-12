@@ -433,6 +433,33 @@ test('V2 history renders seven signed charts and omits unestimated zero markers'
 });
 const loggedIn = (uid = 'admin-a', admin = true) => ({uid,getIdTokenResult:async () => ({claims:{admin}})});
 
+test('insufficient evidence and API errors connect with triangles while retaining reasons and real evidence',async()=>{
+  const {el,requests,submit}=await setup();
+  el('target-login-id').value='target';submit();
+  const point=(id,value,reason='insufficient_evidence',source='openai')=>({id,conversationId:'c1',createdAt:'2026-11-10T00:00:00Z',content:id==='origin'?'今日はとても楽しい':'そうなんだ',emotionState:{positive_affect:value,_analysis:{version:'context-v4',source,axes:{positive_affect:{status:value===null?'unestimated':'estimated',reason:value===null?reason:'estimated',previousMessageId:null}}}}});
+  const raw=[point('origin',.75),point('gap',null),point('error',null,'api_error','error')];
+  requests[0].resolve({data:{...sample('target'),emotionHistory:raw}});await tick();
+  const walk=node=>[node,...node.children.flatMap(walk)];
+  const nodes=()=>walk(el('state-trend'));
+  assert.ok(nodes().some(node=>node.textContent==='▲ APIエラーのため前回値を維持'));
+  const triangles=nodes().filter(node=>node.attributes.points!==undefined && node.attributes.role==='button');
+  assert.equal(triangles.length,2);
+  const firstCard=nodes().find(node=>node.className==='trend-chart');
+  const path=walk(firstCard).find(node=>node.attributes.d!==undefined).attributes.d;
+  assert.equal((path.match(/M/g)??[]).length,1);
+  assert.equal((path.match(/L/g)??[]).length,2);
+  triangles[1].listeners.click();
+  const popup=el('state-trend').querySelector('.trend-popover');
+  const text=walk(popup).map(node=>node.textContent).join(' ');
+  assert.match(text,/保存された値は未推定のまま/);
+  assert.match(text,/APIエラー/);
+  assert.match(text,/値の元になった発言.*今日はとても楽しい/);
+  assert.equal(raw[1].emotionState.positive_affect,null);
+  assert.equal(raw[1].emotionState._analysis.axes.positive_affect.status,'unestimated');
+  assert.equal(raw[2].emotionState.positive_affect,null);
+  assert.equal(raw[2].emotionState._analysis.axes.positive_affect.reason,'api_error');
+});
+
 test('health data reads Firestore by resolved UID and preserves zero, missing fields, date and Timestamp',async()=>{
   const {el,requests,healthRequests,submit}=await setup();
   el('target-login-id').value='target';submit();
