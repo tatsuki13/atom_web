@@ -3,7 +3,7 @@ import { getAuth, setPersistence, browserSessionPersistence, signInWithEmailAndP
 import { getFunctions, httpsCallable } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-functions.js';
 import { getFirestore, collection, query, where, orderBy, limit, getDocsFromServer, doc, getDocFromServer } from 'https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js';
 import { renderStateTrend, closeStateTrendPopup } from './state-trend.js';
-import { renderInterestRegistry, renderInterestChart } from './interest-registry.js?v=20261030-drafts';
+import { renderInterestRegistry, renderInterestChart } from './interest-registry.js?v=20261118-axis-scale';
 import { renderMemoryList, fitMemoryList, fitInterestList } from './memory-list.js?v=20261030-drafts';
 
 import { physicalToday, physicalDayOffset, validPhysicalDay, physicalDays, physicalFields, physicalFormatted, renderPhysicalHistory } from './physical-history.js?v=20261109-physical';

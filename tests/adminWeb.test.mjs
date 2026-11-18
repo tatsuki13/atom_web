@@ -780,7 +780,7 @@ test('confirmed interests display only their linked stored memories as plain tex
 test('refresh updates both displays and empty views explain automatic collection',async()=>{
   const {el,requests}=await interestSetup([]);
   assert.match(interestText(el('interest-chart')),/会話から見つかった興味・関心はまだありません/);
-  assert.equal(walkInterest(el('interest-chart')).filter(node=>node.tagName==='line').length,2);
+  assert.equal(walkInterest(el('interest-chart')).filter(node=>node.tagName==='line' && node.attributes['stroke-dasharray']).length,2);
   assert.equal(walkInterest(el('interest-chart')).filter(node=>node.tagName==='circle').length,0);
   assert.match(interestText(el('keywords')),/確定した興味・関心はまだありません/);
   el('refresh').listeners.click();
@@ -855,11 +855,19 @@ test('quadrant axis switch changes coordinates and keeps unknown data outside th
   interestItem({keyword:'旧データ',activityStatus:'unknown',spontaneityScore:null}),
  ]);
  const points=()=>walkInterest(el('interest-chart')).filter(node=>node.tagName==='circle');
+ const tickLabels=()=>walkInterest(el('interest-chart')).filter(node=>node.tagName==='text' && ['−1','0','+1'].includes(node.textContent));
+ const expectedTicks=[['−1','110','430'],['−1','100','415'],['0','426','430'],['0','100','244'],['+1','742','430'],['+1','100','73']];
+ const checkTicks=()=>assert.deepEqual(tickLabels().map(node=>[node.textContent,node.attributes.x,node.attributes.y]),expectedTicks);
+ checkTicks();
  assert.ok(Number(points()[0].attributes.cx)<426);assert.ok(Number(points()[1].attributes.cx)>426);
  assert.equal(points()[0].attributes['fill-opacity'],'0.28');assert.equal(points()[1].attributes['fill-opacity'],'1');
  const switchButton=walkInterest(el('interest-chart')).find(node=>node.tagName==='button' && node.textContent==='本人の自発性');
  switchButton.listeners.click();
- assert.ok(Number(points()[0].attributes.cx)>426);assert.ok(Number(points()[1].attributes.cx)<426);
+ checkTicks();
+ assert.equal(points()[0].attributes.cx,'742');assert.equal(points()[1].attributes.cx,'110');
+ const pointLabels=walkInterest(el('interest-chart')).filter(node=>node.attributes['data-interest-point']!=null).map(node=>node.attributes['aria-label']);
+ assert.match(pointLabels[0],/自分から話した割合 100%/);
+ assert.match(pointLabels[1],/自分から話した割合 0%/);
  assert.equal(points().length,2);assert.match(interestText(el('interest-chart')),/旧データ.*自発性が未判定/);
  const keyword=walkInterest(el('interest-chart')).find(node=>node.attributes['data-interest-keyword']==='2');
  keyword.listeners.click();
@@ -882,12 +890,18 @@ test('overlapping keywords remain selectable by mouse and keyboard without expos
 test('quadrant coordinates honor explicit preferences and leave invalid or missing values unknown',async()=>{
  const {context}=await setup();
  const position=context.interestChartPosition;
- assert.equal(position({interestScore:.95,explicitPolarity:'negative',activityStatus:'paused'}).y,.25);
- assert.equal(position({interestScore:.1,explicitPolarity:'positive',activityStatus:'active'}).y,.75);
- assert.equal(position({interestScore:0,activityStatus:'paused'}).y,0);
+ assert.equal(position({interestScore:.95,explicitPolarity:'negative',activityStatus:'paused'}).y,-.5);
+ assert.equal(position({interestScore:.1,explicitPolarity:'positive',activityStatus:'active'}).y,.5);
+ assert.equal(position({interestScore:0,activityStatus:'paused'}).y,-1);
+ assert.equal(position({interestScore:.5,activityStatus:'paused'}).y,0);
+ assert.equal(position({interestScore:1,activityStatus:'active'}).y,1);
+ assert.equal(position({activityStatus:'paused'}).x,-.7);
+ assert.equal(position({activityStatus:'active'}).x,.7);
  assert.equal(position({interestScore:null,activityStatus:'unknown'}).y,null);
  assert.equal(position({interestScore:.6,activityStatus:'unknown'}).x,null);
- assert.equal(position({interestScore:.6,spontaneityScore:0},'spontaneity').x,0);
+ assert.equal(position({interestScore:.6,spontaneityScore:0},'spontaneity').x,-1);
+ assert.equal(position({interestScore:.6,spontaneityScore:.5},'spontaneity').x,0);
+ assert.equal(position({interestScore:.6,spontaneityScore:1},'spontaneity').x,1);
  assert.equal(position({interestScore:.6,spontaneityScore:NaN},'spontaneity').x,null);
  assert.equal(position({interestScore:.6,spontaneityScore:2},'spontaneity').x,null);
 });

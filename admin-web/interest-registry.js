@@ -18,12 +18,12 @@ const detailLabels = {appeal:'好きな点', origin:'きっかけ', experience:'
 // The vertical position follows the latest explicit preference before accumulated weights.
 // Missing coordinates stay missing; absence is never plotted as rejection or inactivity.
 export function interestChartPosition(item, axis = 'activity') {
-  let y = valid(item.interestScore, 1) ? item.interestScore : null;
-  if (item.explicitPolarity === 'negative') y = Math.min(y ?? .25, .25);
-  if (item.explicitPolarity === 'positive') y = Math.max(y ?? .75, .75);
+  let y = valid(item.interestScore, 1) ? 2 * item.interestScore - 1 : null;
+  if (item.explicitPolarity === 'negative') y = Math.min(y ?? -.5, -.5);
+  if (item.explicitPolarity === 'positive') y = Math.max(y ?? .5, .5);
   const x = axis === 'spontaneity'
-    ? (valid(item.spontaneityScore, 1) ? item.spontaneityScore : null)
-    : item.activityStatus === 'active' ? .85 : item.activityStatus === 'paused' ? .15 : null;
+    ? (valid(item.spontaneityScore, 1) ? 2 * item.spontaneityScore - 1 : null)
+    : item.activityStatus === 'active' ? .7 : item.activityStatus === 'paused' ? -.7 : null;
   return {x, y};
 }
 const preferenceLabel = item => item.explicitPolarity === 'negative' ? '興味なしの明言あり'
@@ -68,17 +68,26 @@ export function renderInterestChart(container, items, editing, memories = []) {
       ? '横軸：左は「やっていない・休止中」、右は「やっている」。活動状況は実施中／休止中の区分で表示します。'
       : '横軸：左は「聞かれて話す」、右は「自分から話す」。日ごとの観測を使い、同じ日の繰り返しでは偏らせません。過去の未集計データは未判定です。';
     plot.replaceChildren(); list.replaceChildren(); detail.replaceChildren();
-    const graph = svg('svg', {viewBox:'0 0 820 510',role:'group','aria-label':`興味関心の四象限グラフ。縦軸は興味の方向、横軸は${activity ? '活動状況' : '本人の自発性'}。キーワードを選ぶと詳細を表示します。`});
+    const graph = svg('svg', {viewBox:'0 0 820 510',role:'group','aria-label':`興味関心の四象限グラフ。縦軸は興味の方向、横軸は${activity ? '活動状況' : '本人の自発性'}。両軸ともマイナス1からプラス1です。キーワードを選ぶと詳細を表示します。`});
     const left = 110, right = 742, top = 68, bottom = 410, middleX = 426, middleY = 239;
+    const plotX = value => middleX + (right - left) / 2 * value;
+    const plotY = value => middleY - (bottom - top) / 2 * value;
     for (const [x,y,fill] of [[left,top,'#eef6f1'],[middleX,top,'#e6f1ed'],[left,middleY,'#f7f4ef'],[middleX,middleY,'#f3f0ed']]) {
       graph.append(svg('rect',{x,y,width:316,height:171,fill}));
     }
     graph.append(svg('rect',{x:left,y:top,width:right-left,height:bottom-top,fill:'none',stroke:'#cfddd5',rx:8}));
     graph.append(svg('line',{x1:left,x2:right,y1:middleY,y2:middleY,stroke:'#9eb4a8','stroke-dasharray':'5 5'}));
     graph.append(svg('line',{x1:middleX,x2:middleX,y1:top,y2:bottom,stroke:'#9eb4a8','stroke-dasharray':'5 5'}));
+    for (const [value, label] of [[-1, '−1'], [0, '0'], [1, '+1']]) {
+      const x = plotX(value), y = plotY(value);
+      graph.append(svg('line',{x1:x,x2:x,y1:bottom,y2:bottom+5,stroke:'#9eb4a8'}));
+      graph.append(svg('line',{x1:left-5,x2:left,y1:y,y2:y,stroke:'#9eb4a8'}));
+      graph.append(svg('text',{x,y:bottom+20,'text-anchor':'middle',fill:'#4c6358','font-size':14},label));
+      graph.append(svg('text',{x:left-10,y:y+5,'text-anchor':'end',fill:'#4c6358','font-size':14},label));
+    }
     graph.append(svg('text',{x:middleX,y:top-20,'text-anchor':'middle',fill:'#355c4c','font-size':14},'興味あり'));
-    graph.append(svg('text',{x:middleX,y:bottom+28,'text-anchor':'middle',fill:'#796a5d','font-size':14},'興味なし'));
-    graph.append(svg('text',{x:left/2,y:middleY+5,'text-anchor':'middle',fill:'#4c6358','font-size':12},activity ? 'やっていない' : '聞かれて話す'));
+    graph.append(svg('text',{x:middleX,y:bottom+45,'text-anchor':'middle',fill:'#796a5d','font-size':14},'興味なし'));
+    graph.append(svg('text',{x:left/2,y:middleY-12,'text-anchor':'middle',fill:'#4c6358','font-size':12},activity ? 'やっていない' : '聞かれて話す'));
     graph.append(svg('text',{x:(right+820)/2,y:middleY+5,'text-anchor':'middle',fill:'#4c6358','font-size':12},activity ? 'やっている' : '自分から話す'));
     graph.append(svg('text',{x:middleX,y:490,'text-anchor':'middle',fill:'#77877f','font-size':12},'点の濃さ：根拠の確かさの目安　　破線の点：推定中'));
     const occupied = [];
@@ -100,9 +109,9 @@ export function renderInterestChart(container, items, editing, memories = []) {
       const position = interestChartPosition(item, axis);
       if (position.x === null || position.y === null) { unknown++; continue; }
       positioned++;
-      const x = left + (right-left)*position.x, y = bottom - (bottom-top)*position.y;
-      const color = position.y > .5 ? '#31715a' : position.y < .5 ? '#98624f' : '#58758c';
-      const group = svg('g',{role:'button',tabindex:0,'aria-label':`${item.keyword}：${preferenceLabel(item)}、${activity ? activityLabel(item) : `自分から話した割合 ${Math.round(position.x*100)}%`}${item.confirmationState === 'inferred' ? '、推定中' : ''}`,'aria-pressed':String(index === selected),'data-interest-point':index});
+      const x = plotX(position.x), y = plotY(position.y);
+      const color = position.y > 0 ? '#31715a' : position.y < 0 ? '#98624f' : '#58758c';
+      const group = svg('g',{role:'button',tabindex:0,'aria-label':`${item.keyword}：${preferenceLabel(item)}、${activity ? activityLabel(item) : `自分から話した割合 ${Math.round(item.spontaneityScore*100)}%`}${item.confirmationState === 'inferred' ? '、推定中' : ''}`,'aria-pressed':String(index === selected),'data-interest-point':index});
       group.append(svg('title',{},`${item.keyword}：${preferenceLabel(item)}${item.confirmationState === 'inferred' ? '（推定中）' : ''}／${activity ? activityLabel(item) : '本人の自発性'}`));
       const labelText = String(item.keyword ?? '');
       const short = labelText.length > 9 ? labelText.slice(0,9)+'…' : labelText;
